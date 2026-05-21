@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "393250629301",
+    "project_id": "contest-app-94050",
+    "storage_bucket": "contest-app-94050.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:393250629301:android:44577a5a19334df56a40fc",
+        "android_client_info": {
+          "package_name": "com.contestlive.contest_live"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDEuBbskDjvf_zZ78zpiOVK7v3q00lptmw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
