@@ -1,0 +1,11 @@
+workflows:
+  ios-build:
+    name: iOS Build
+    environment:
+      vars:
+        FLUTTER_VERSION: "3.8.1"
+    scripts:
+      - flutter pub get
+      - flutter build ios --release
+    artifacts:
+      - build/ios/ipa/*.ipa
