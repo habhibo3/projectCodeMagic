@@ -4,8 +4,6 @@ workflows:
     max_build_duration: 60
     environment:
       flutter: 3.8.1
-      integrations:
-        app_store_connect: Contest
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.contestlive.contestLive
