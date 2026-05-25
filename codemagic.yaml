@@ -1,11 +1,32 @@
 workflows:
   ios-build:
     name: iOS Build
+    max_build_duration: 60
     environment:
-      vars:
-        FLUTTER_VERSION: "3.8.1"
+      flutter: 3.8.1
+      integrations:
+        app_store_connect: Contest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.contestlive.contestLive
     scripts:
-      - flutter pub get
-      - flutter build ios --release
+      - name: Get Flutter dependencies
+        script: flutter pub get
+      - name: Build iOS release
+        script: flutter build ios --release --no-codesign
+      - name: Package into IPA
+        script: |
+          xcode-project use-profiles
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner
     artifacts:
       - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      email:
+        recipients:
+          - ihebmechergui333@gmail.com
+        notify:
+          success: true
+          failure: true
