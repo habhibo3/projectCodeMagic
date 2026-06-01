@@ -726,11 +726,6 @@ class _EntryPostScreenState extends State<EntryPostScreen> {
     );
   }
 
-  String _formatNumber(int n) {
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return '$n';
-  }
-
   String _formatNumberComma(int n) {
     return n.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},');
   }

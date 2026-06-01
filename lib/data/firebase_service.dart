@@ -1,14 +1,27 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart' as firebase_storage;
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/entry.dart';
 import '../models/comment.dart';
 import '../models/review.dart';
 import '../models/user.dart';
+import '../models/post.dart';
+import '../models/notification.dart';
 import 'mock_data.dart';
+
 
 class FirebaseService {
   FirebaseFirestore? _db;
   bool _isInitialized = false;
+
+  static UserModel? _mockUserProfile;
+  static final StreamController<UserModel?> _mockUserStreamController = StreamController<UserModel?>.broadcast();
+  static final List<PostModel> _mockPosts = [];
+  static final StreamController<List<PostModel>> _mockPostsStreamController = StreamController<List<PostModel>>.broadcast();
+  static final Map<String, List<CommentModel>> _mockPostComments = {};
+  static final StreamController<Map<String, List<CommentModel>>> _mockPostCommentsStreamController = StreamController<Map<String, List<CommentModel>>>.broadcast();
 
   FirebaseService() {
     try {
@@ -58,7 +71,7 @@ class FirebaseService {
   // -------------------------------------------------------------------------
   Stream<List<ContestEntry>> getEntries(String contestId) {
     if (!_isInitialized || _db == null) {
-      return Stream.value(MockData.getEntries());
+      return Stream.value([]);
     }
 
     return _db!
@@ -67,15 +80,15 @@ class FirebaseService {
         .collection('entries')
         .snapshots()
         .map((snapshot) {
-      if (snapshot.docs.isEmpty) return MockData.getEntries();
-      
+      if (snapshot.docs.isEmpty) return [];
+
       final entries = snapshot.docs.map((doc) {
         final data = doc.data();
-        
+
         // Provide fallback URLs to prevent NetworkImage crash
         final avatar = data['userAvatar']?.toString() ?? '';
         final content = data['contentUrl']?.toString() ?? '';
-        
+
         final reviewCount = (data['reviewCount'] ?? 0) as int;
         final totalStars = (data['totalStars'] ?? 0) as int;
         double averageRating = 0;
@@ -100,6 +113,13 @@ class FirebaseService {
           ratingStars: averageRating.round().clamp(0, 5),
           averageRating: averageRating,
           reviewCount: reviewCount,
+          visibilityScope: data['visibilityScope'] ?? 'global',
+          zip: data['zip'] ?? '75001',
+          city: data['city'] ?? 'Tunis',
+          state: data['state'] ?? 'Tunis State',
+          country: data['country'] ?? 'Tunisia',
+          contestType: data['contestType'] ?? 'Official',
+          contestId: data['contestId'] ?? contestId,
         );
       }).toList();
       
@@ -321,27 +341,189 @@ class FirebaseService {
     await ref.set({
       'displayName': 'FeastVote Player',
       'email': '',
-      'photoURL': 'https://i.pravatar.cc/150?u=$uid',
+      'photoURL': '',
       'role': 'contestant',
       'country': defaultCountry,
       'countryFlag': defaultFlag,
       'bio': '',
       'createdAt': FieldValue.serverTimestamp(),
       'totalVotesCast': 0,
+      'subscriptionLevel': 'free',
+      'zip': '75001',
+      'city': 'Tunis',
+      'state': 'Tunis State',
+      'location': 'Tunis, Tunisia',
     });
+  }
+
+  Future<String> uploadProfilePhoto(String uid, File file) async {
+    if (!_isInitialized || _db == null) {
+      final path = file.path;
+      if (_mockUserProfile != null) {
+        _mockUserProfile = UserModel(
+          uid: _mockUserProfile!.uid,
+          displayName: _mockUserProfile!.displayName,
+          email: _mockUserProfile!.email,
+          photoURL: path,
+          role: _mockUserProfile!.role,
+          country: _mockUserProfile!.country,
+          countryFlag: _mockUserProfile!.countryFlag,
+          bio: _mockUserProfile!.bio,
+          createdAt: _mockUserProfile!.createdAt,
+          totalVotesCast: _mockUserProfile!.totalVotesCast,
+          subscriptionLevel: _mockUserProfile!.subscriptionLevel,
+          zip: _mockUserProfile!.zip,
+          city: _mockUserProfile!.city,
+          state: _mockUserProfile!.state,
+          location: _mockUserProfile!.location,
+        );
+        _mockUserStreamController.add(_mockUserProfile);
+      }
+      return path;
+    }
+    try {
+      final ref = firebase_storage.FirebaseStorage.instance
+          .ref()
+          .child('users')
+          .child(uid)
+          .child('profile.jpg');
+      await ref.putFile(file);
+      final downloadUrl = await ref.getDownloadURL();
+      
+      // Update user doc
+      await _db!.collection('users').doc(uid).set({
+        'photoURL': downloadUrl,
+      }, SetOptions(merge: true));
+      
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('Failed to upload profile photo to Firebase Storage: $e');
+      debugPrint('Falling back to local file path');
+      // Fallback: use local file path if Firebase Storage fails
+      final localPath = file.path;
+      await _db!.collection('users').doc(uid).set({
+        'photoURL': localPath,
+      }, SetOptions(merge: true));
+      return localPath;
+    }
+  }
+
+  Future<String> uploadPostMedia(String userId, File file) async {
+    if (!_isInitialized || _db == null) return file.path;
+    try {
+      final fileName = 'post_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref = firebase_storage.FirebaseStorage.instance
+          .ref()
+          .child('users')
+          .child(userId)
+          .child('posts')
+          .child(fileName);
+      await ref.putFile(file);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      debugPrint('Failed to upload post media to Firebase Storage: $e');
+      debugPrint('Falling back to local file path');
+      // Fallback: use local file path if Firebase Storage fails
+      return file.path;
+    }
   }
 
   Future<void> updateUserCountry(
       String uid, String country, String countryFlag) async {
-    if (!_isInitialized || _db == null) return;
+    if (!_isInitialized || _db == null) {
+      if (_mockUserProfile != null) {
+        _mockUserProfile = UserModel(
+          uid: _mockUserProfile!.uid,
+          displayName: _mockUserProfile!.displayName,
+          email: _mockUserProfile!.email,
+          photoURL: _mockUserProfile!.photoURL,
+          role: _mockUserProfile!.role,
+          country: country,
+          countryFlag: countryFlag,
+          bio: _mockUserProfile!.bio,
+          createdAt: _mockUserProfile!.createdAt,
+          totalVotesCast: _mockUserProfile!.totalVotesCast,
+          subscriptionLevel: _mockUserProfile!.subscriptionLevel,
+          zip: _mockUserProfile!.zip,
+          city: _mockUserProfile!.city,
+          state: _mockUserProfile!.state,
+          location: _mockUserProfile!.location,
+        );
+        _mockUserStreamController.add(_mockUserProfile);
+      }
+      return;
+    }
     await _db!.collection('users').doc(uid).set({
       'country': country,
       'countryFlag': countryFlag,
     }, SetOptions(merge: true));
   }
 
+  Future<void> updateUserLocation({
+    required String uid,
+    required String zip,
+    required String city,
+    required String state,
+    required String country,
+    required String countryFlag,
+  }) async {
+    if (!_isInitialized || _db == null) {
+      if (_mockUserProfile != null) {
+        _mockUserProfile = UserModel(
+          uid: _mockUserProfile!.uid,
+          displayName: _mockUserProfile!.displayName,
+          email: _mockUserProfile!.email,
+          photoURL: _mockUserProfile!.photoURL,
+          role: _mockUserProfile!.role,
+          country: country,
+          countryFlag: countryFlag,
+          bio: _mockUserProfile!.bio,
+          createdAt: _mockUserProfile!.createdAt,
+          totalVotesCast: _mockUserProfile!.totalVotesCast,
+          subscriptionLevel: _mockUserProfile!.subscriptionLevel,
+          zip: zip,
+          city: city,
+          state: state,
+          location: '$city, $country',
+        );
+        _mockUserStreamController.add(_mockUserProfile);
+      }
+      return;
+    }
+    await _db!.collection('users').doc(uid).set({
+      'zip': zip.trim(),
+      'city': city.trim(),
+      'state': state.trim(),
+      'country': country.trim(),
+      'countryFlag': countryFlag,
+      'location': '${city.trim()}, ${country.trim()}',
+    }, SetOptions(merge: true));
+  }
+
   Future<void> updateUserDisplayName(String uid, String displayName) async {
-    if (!_isInitialized || _db == null) return;
+    if (!_isInitialized || _db == null) {
+      if (_mockUserProfile != null) {
+        _mockUserProfile = UserModel(
+          uid: _mockUserProfile!.uid,
+          displayName: displayName,
+          email: _mockUserProfile!.email,
+          photoURL: _mockUserProfile!.photoURL,
+          role: _mockUserProfile!.role,
+          country: _mockUserProfile!.country,
+          countryFlag: _mockUserProfile!.countryFlag,
+          bio: _mockUserProfile!.bio,
+          createdAt: _mockUserProfile!.createdAt,
+          totalVotesCast: _mockUserProfile!.totalVotesCast,
+          subscriptionLevel: _mockUserProfile!.subscriptionLevel,
+          zip: _mockUserProfile!.zip,
+          city: _mockUserProfile!.city,
+          state: _mockUserProfile!.state,
+          location: _mockUserProfile!.location,
+        );
+        _mockUserStreamController.add(_mockUserProfile);
+      }
+      return;
+    }
     final trimmed = displayName.trim();
     if (trimmed.isEmpty) return;
     await _db!.collection('users').doc(uid).set({
@@ -349,13 +531,17 @@ class FirebaseService {
     }, SetOptions(merge: true));
   }
 
-  /// Keeps contest entry cards in sync with the user's real profile name.
+  /// Keeps contest entry cards in sync with the user's real profile details.
   Future<void> syncEntryUserProfile(
     String contestId,
     String userId, {
     required String displayName,
     required String photoURL,
     required String countryFlag,
+    required String zip,
+    required String city,
+    required String state,
+    required String country,
   }) async {
     if (!_isInitialized || _db == null) return;
     final snap = await _db!
@@ -369,27 +555,80 @@ class FirebaseService {
         'userName': displayName,
         'userAvatar': photoURL,
         'countryFlag': countryFlag,
+        'zip': zip,
+        'city': city,
+        'state': state,
+        'country': country,
       });
     }
   }
 
-  Stream<UserModel?> getUserProfile(String userId) {
+  Future<void> syncPostUserProfile(
+    String userId, {
+    required String displayName,
+    required String photoURL,
+  }) async {
     if (!_isInitialized || _db == null) {
-      return Stream.value(UserModel(
-        uid: userId,
-        displayName: 'James USA',
-        email: 'james@feastvote.com',
-        photoURL: 'https://i.pravatar.cc/150?u=1',
-        role: 'contestant',
-        country: 'United States',
-        countryFlag: '🇺🇸',
-        bio: 'FeastVote regular performer.',
-        createdAt: DateTime.now(),
-        totalVotesCast: 120,
-      ));
+      for (int i = 0; i < _mockPosts.length; i++) {
+        if (_mockPosts[i].userId == userId) {
+          _mockPosts[i] = PostModel(
+            id: _mockPosts[i].id,
+            userId: _mockPosts[i].userId,
+            userName: displayName,
+            userAvatar: photoURL,
+            type: _mockPosts[i].type,
+            contentUrl: _mockPosts[i].contentUrl,
+            caption: _mockPosts[i].caption,
+            visibilityScope: _mockPosts[i].visibilityScope,
+            location: _mockPosts[i].location,
+            createdAt: _mockPosts[i].createdAt,
+            contestId: _mockPosts[i].contestId,
+            likes: _mockPosts[i].likes,
+            commentsCount: _mockPosts[i].commentsCount,
+          );
+        }
+      }
+      _mockPostsStreamController.add(List.from(_mockPosts));
+      return;
+    }
+    try {
+      final snap = await _db!
+          .collection('posts')
+          .where('userId', isEqualTo: userId)
+          .get();
+      for (final doc in snap.docs) {
+        await doc.reference.update({
+          'userName': displayName,
+          'userAvatar': photoURL,
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to sync post user profile: $e');
+    }
+  }
+
+  Stream<UserModel?> getUserProfile(String userId) async* {
+    if (!_isInitialized || _db == null) {
+      if (_mockUserProfile == null) {
+        _mockUserProfile = UserModel(
+          uid: userId,
+          displayName: 'James USA',
+          email: 'james@feastvote.com',
+          photoURL: '',
+          role: 'contestant',
+          country: 'United States',
+          countryFlag: '🇺🇸',
+          bio: 'FeastVote regular performer.',
+          createdAt: DateTime.now(),
+          totalVotesCast: 120,
+        );
+      }
+      yield _mockUserProfile;
+      yield* _mockUserStreamController.stream;
+      return;
     }
 
-    return _db!.collection('users').doc(userId).snapshots().map((doc) {
+    yield* _db!.collection('users').doc(userId).snapshots().map((doc) {
       if (!doc.exists) return null;
       return UserModel.fromFirestore(doc);
     });
@@ -609,5 +848,584 @@ class FirebaseService {
       debugPrint('Failed to add review transaction: $e');
       return false;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // DECREMENT WINDOW VOTE (10-Second Sliding Window)
+  // -------------------------------------------------------------------------
+  Future<void> decrementWindowVote(String contestId, String entryId) async {
+    if (!_isInitialized || _db == null) return;
+    final entryRef = _db!.collection('contests').doc(contestId).collection('entries').doc(entryId);
+    try {
+      await _db!.runTransaction((transaction) async {
+        final snap = await transaction.get(entryRef);
+        if (!snap.exists) return;
+        final currentWindow = snap.data()?['windowVotes'] ?? 0;
+        if (currentWindow > 0) {
+          transaction.update(entryRef, {
+            'windowVotes': currentWindow - 1,
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to decrement window vote: $e');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // POSTS & CONTEST JOINING WORKFLOW
+  // -------------------------------------------------------------------------
+  Future<void> createPost(PostModel post) async {
+    if (!_isInitialized || _db == null) {
+      _mockPosts.add(post);
+      _mockPostsStreamController.add(List.from(_mockPosts));
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(post.id);
+      await postRef.set(post.toMap());
+    } catch (e) {
+      debugPrint('Error creating post: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> createPostAndJoinContest(PostModel post, String? contestId) async {
+    if (!_isInitialized || _db == null) {
+      _mockPosts.add(post);
+      _mockPostsStreamController.add(List.from(_mockPosts));
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(post.id);
+
+      await _db!.runTransaction((transaction) async {
+        transaction.set(postRef, post.toMap());
+
+        if (contestId != null && contestId.isNotEmpty) {
+          final contestRef = _db!.collection('contests').doc(contestId);
+          final entryRef = contestRef.collection('entries').doc(post.id);
+          final userRef = _db!.collection('users').doc(post.userId);
+          
+          final contestSnap = await transaction.get(contestRef);
+          final userSnap = await transaction.get(userRef);
+          
+          final userFlag = userSnap.exists ? (userSnap.data()?['countryFlag'] ?? '🌍') : '🌍';
+          final userZip = userSnap.exists ? (userSnap.data()?['zip'] ?? '75001') : '75001';
+          final userCity = userSnap.exists ? (userSnap.data()?['city'] ?? 'Tunis') : 'Tunis';
+          final userState = userSnap.exists ? (userSnap.data()?['state'] ?? 'Tunis State') : 'Tunis State';
+          final userCountry = userSnap.exists ? (userSnap.data()?['country'] ?? 'Tunisia') : 'Tunisia';
+          final contestType = contestSnap.exists ? (contestSnap.data()?['type'] ?? 'Official') : 'Official';
+          
+          transaction.set(entryRef, {
+            'userId': post.userId,
+            'userName': post.userName,
+            'userAvatar': post.userAvatar,
+            'countryFlag': userFlag,
+            'contentUrl': post.contentUrl,
+            'type': post.type,
+            'caption': post.caption,
+            'totalVotes': 0,
+            'windowVotes': 0,
+            'ratingStars': 0,
+            'totalStars': 0,
+            'reviewCount': 0,
+            'averageRating': 0.0,
+            'postId': post.id,
+            'visibilityScope': post.visibilityScope,
+            'zip': userZip,
+            'city': userCity,
+            'state': userState,
+            'country': userCountry,
+            'contestType': contestType,
+            'contestId': contestId,
+          });
+          
+          if (contestSnap.exists) {
+            final currentParticipants = contestSnap.data()?['participantCount'] ?? 0;
+            transaction.update(contestRef, {
+              'participantCount': currentParticipants + 1,
+            });
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to create post and join contest: $e');
+    }
+  }
+
+  Future<void> deletePost(String postId) async {
+    if (!_isInitialized || _db == null) {
+      _mockPosts.removeWhere((p) => p.id == postId);
+      _mockPostComments.remove(postId);
+      _mockPostsStreamController.add(List.from(_mockPosts));
+      _mockPostCommentsStreamController.add(Map.from(_mockPostComments));
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(postId);
+      await postRef.delete();
+      // Also delete comments for this post
+      final commentsRef = _db!.collection('posts').doc(postId).collection('comments');
+      final commentsSnapshot = await commentsRef.get();
+      for (var doc in commentsSnapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      debugPrint('Error deleting post: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updatePost(String postId, Map<String, dynamic> updates) async {
+    if (!_isInitialized || _db == null) {
+      final index = _mockPosts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        final post = _mockPosts[index];
+        _mockPosts[index] = PostModel(
+          id: post.id,
+          userId: post.userId,
+          userName: post.userName,
+          userAvatar: post.userAvatar,
+          type: updates['type'] ?? post.type,
+          contentUrl: updates['contentUrl'] ?? post.contentUrl,
+          caption: updates['caption'] ?? post.caption,
+          visibilityScope: updates['visibilityScope'] ?? post.visibilityScope,
+          location: updates['location'] ?? post.location,
+          createdAt: post.createdAt,
+          contestId: post.contestId,
+          likes: post.likes,
+          commentsCount: post.commentsCount,
+        );
+        _mockPostsStreamController.add(List.from(_mockPosts));
+      }
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(postId);
+      await postRef.update(updates);
+    } catch (e) {
+      debugPrint('Error updating post: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> createContest(ContestModel contest) async {
+    if (!_isInitialized || _db == null) {
+      debugPrint('Mock contest creation not implemented');
+      return;
+    }
+    try {
+      final contestRef = _db!.collection('contests').doc(contest.id);
+      await contestRef.set(contest.toMap());
+    } catch (e) {
+      debugPrint('Error creating contest: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> assignPostToContest(String postId, String contestId) async {
+    if (!_isInitialized || _db == null) return true;
+    try {
+      final postRef = _db!.collection('posts').doc(postId);
+      final contestRef = _db!.collection('contests').doc(contestId);
+      final entryRef = contestRef.collection('entries').doc(postId);
+
+      final result = await _db!.runTransaction((transaction) async {
+        final postSnap = await transaction.get(postRef);
+        if (!postSnap.exists) return false;
+
+        final postData = postSnap.data()!;
+        final existingContestId = postData['contestId'] as String?;
+
+        if (existingContestId != null && existingContestId.isNotEmpty) {
+          return false; // 1 post = 1 contest only enforcement!
+        }
+
+        final contestSnap = await transaction.get(contestRef);
+        if (!contestSnap.exists) return false;
+
+        final userRef = _db!.collection('users').doc(postData['userId']);
+        final userSnap = await transaction.get(userRef);
+        
+        final userFlag = userSnap.exists ? (userSnap.data()?['countryFlag'] ?? '🌍') : '🌍';
+        final userZip = userSnap.exists ? (userSnap.data()?['zip'] ?? '75001') : '75001';
+        final userCity = userSnap.exists ? (userSnap.data()?['city'] ?? 'Tunis') : 'Tunis';
+        final userState = userSnap.exists ? (userSnap.data()?['state'] ?? 'Tunis State') : 'Tunis State';
+        final userCountry = userSnap.exists ? (userSnap.data()?['country'] ?? 'Tunisia') : 'Tunisia';
+        final contestType = contestSnap.data()?['type'] ?? 'Official';
+        
+        transaction.update(postRef, {'contestId': contestId});
+        
+        transaction.set(entryRef, {
+          'userId': postData['userId'],
+          'userName': postData['userName'] ?? 'Anonymous',
+          'userAvatar': postData['userAvatar'] ?? 'https://i.pravatar.cc/150?u=99',
+          'countryFlag': userFlag,
+          'contentUrl': postData['contentUrl'] ?? '',
+          'type': postData['type'] ?? 'image',
+          'caption': postData['caption'] ?? '',
+          'totalVotes': 0,
+          'windowVotes': 0,
+          'ratingStars': 0,
+          'totalStars': 0,
+          'reviewCount': 0,
+          'averageRating': 0.0,
+          'postId': postId,
+          'visibilityScope': postData['visibilityScope'] ?? 'global',
+          'zip': userZip,
+          'city': userCity,
+          'state': userState,
+          'country': userCountry,
+          'contestType': contestType,
+          'contestId': contestId,
+        });
+        
+        final currentParticipants = contestSnap.data()?['participantCount'] ?? 0;
+        transaction.update(contestRef, {
+          'participantCount': currentParticipants + 1,
+        });
+        
+        return true;
+      });
+      return result;
+    } catch (e) {
+      debugPrint('Failed to assign post to contest: $e');
+      return false;
+    }
+  }
+
+  Stream<List<PostModel>> getUserPosts(String userId) async* {
+    if (!_isInitialized || _db == null) {
+      final list = _mockPosts.where((p) => p.userId == userId).toList();
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      yield list;
+      yield* _mockPostsStreamController.stream.map((posts) {
+        final filtered = posts.where((p) => p.userId == userId).toList();
+        filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return filtered;
+      });
+      return;
+    }
+    yield* _db!
+        .collection('posts')
+        .where('userId', isEqualTo: userId)
+        .snapshots()
+        .map((snapshot) {
+      final posts = snapshot.docs.map((doc) => PostModel.fromFirestore(doc)).toList();
+      posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return posts;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // GLOBAL REAL-TIME SLIDING FEED
+  // -------------------------------------------------------------------------
+  Stream<List<ContestEntry>> watchGlobalFeedEntries() {
+    if (!_isInitialized || _db == null) {
+      return Stream.value([]);
+    }
+
+    return _db!.collectionGroup('entries').snapshots().map((snapshot) {
+      final entries = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final avatar = data['userAvatar']?.toString() ?? '';
+        final content = data['contentUrl']?.toString() ?? '';
+        final reviewCount = (data['reviewCount'] ?? 0) as int;
+        final totalStars = (data['totalStars'] ?? 0) as int;
+        double averageRating = 0;
+        if (reviewCount > 0) {
+          averageRating = totalStars / reviewCount;
+        } else {
+          averageRating = ((data['averageRating'] ?? data['rating'] ?? 0) as num).toDouble();
+        }
+        return ContestEntry(
+          id: doc.id,
+          userId: data['userId'] ?? '',
+          userName: data['userName'] ?? 'Anonymous',
+          userAvatar: avatar.isEmpty ? 'https://i.pravatar.cc/150?u=99' : avatar,
+          countryFlag: data['countryFlag'] ?? '🌍',
+          contentUrl: content.isEmpty ? 'https://images.unsplash.com/photo-1516280440614-37939bbacd81' : content,
+          type: data['type'] ?? 'image',
+          caption: data['caption'] ?? '',
+          totalVotes: data['totalVotes'] ?? 0,
+          windowVotes: data['windowVotes'] ?? 0,
+          ratingStars: averageRating.round().clamp(0, 5),
+          averageRating: averageRating,
+          reviewCount: reviewCount,
+          visibilityScope: data['visibilityScope'] ?? 'global',
+          zip: data['zip'] ?? '75001',
+          city: data['city'] ?? 'Tunis',
+          state: data['state'] ?? 'Tunis State',
+          country: data['country'] ?? 'Tunisia',
+          contestType: data['contestType'] ?? 'Official',
+          contestId: data['contestId'] ?? '',
+        );
+      }).toList();
+
+      entries.sort((a, b) {
+        int cmp = b.windowVotes.compareTo(a.windowVotes);
+        if (cmp == 0) return b.totalVotes.compareTo(a.totalVotes);
+        return cmp;
+      });
+
+      return entries;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // REAL-TIME NOTIFICATIONS
+  // -------------------------------------------------------------------------
+  Future<void> sendNotification(NotificationModel notification) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _db!.collection('notifications').add(notification.toMap());
+    } catch (e) {
+      debugPrint('Failed to send notification: $e');
+    }
+  }
+
+  Stream<List<NotificationModel>> watchNotifications() {
+    if (!_isInitialized || _db == null) {
+      return Stream.value([
+        NotificationModel(
+          id: 'mock_n1',
+          title: 'Contest Started',
+          message: 'Sophie France joined the Live Contest!',
+          type: 'join',
+          timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
+          senderName: 'Sophie France',
+          senderAvatar: 'https://i.pravatar.cc/150?u=4',
+        ),
+        NotificationModel(
+          id: 'mock_n2',
+          title: 'High Vote Velocity!',
+          message: 'Gordon Ramsey voted for Wei China!',
+          type: 'vote',
+          timestamp: DateTime.now().subtract(const Duration(minutes: 10)),
+          senderName: 'Gordon Ramsey',
+          senderAvatar: 'https://i.pravatar.cc/150?u=99',
+        ),
+      ]);
+    }
+    return _db!
+        .collection('notifications')
+        .orderBy('timestamp', descending: true)
+        .limit(30)
+        .snapshots()
+        .map((snap) {
+      return snap.docs.map((doc) => NotificationModel.fromFirestore(doc)).toList();
+    });
+  }
+
+  Future<void> toggleLikePost(String postId, String userId) async {
+    if (!_isInitialized || _db == null) {
+      final index = _mockPosts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        final post = _mockPosts[index];
+        final updatedLikes = List<String>.from(post.likes);
+        if (updatedLikes.contains(userId)) {
+          updatedLikes.remove(userId);
+        } else {
+          updatedLikes.add(userId);
+        }
+        _mockPosts[index] = PostModel(
+          id: post.id,
+          userId: post.userId,
+          userName: post.userName,
+          userAvatar: post.userAvatar,
+          type: post.type,
+          contentUrl: post.contentUrl,
+          caption: post.caption,
+          visibilityScope: post.visibilityScope,
+          location: post.location,
+          createdAt: post.createdAt,
+          contestId: post.contestId,
+          likes: updatedLikes,
+          commentsCount: post.commentsCount,
+        );
+        _mockPostsStreamController.add(List.from(_mockPosts));
+      }
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(postId);
+      await _db!.runTransaction((transaction) async {
+        final snap = await transaction.get(postRef);
+        if (!snap.exists) return;
+        final data = snap.data() ?? {};
+        final likesData = data['likes'];
+        final List<String> currentLikes = likesData is List ? List<String>.from(likesData) : [];
+        if (currentLikes.contains(userId)) {
+          transaction.update(postRef, {
+            'likes': FieldValue.arrayRemove([userId])
+          });
+        } else {
+          transaction.update(postRef, {
+            'likes': FieldValue.arrayUnion([userId])
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to toggle like: $e');
+    }
+  }
+
+  Future<void> addPostComment(String postId, CommentModel comment) async {
+    if (!_isInitialized || _db == null) {
+      if (!_mockPostComments.containsKey(postId)) {
+        _mockPostComments[postId] = [];
+      }
+      final updatedComment = CommentModel(
+        id: comment.id.isEmpty ? 'mock_comment_${DateTime.now().millisecondsSinceEpoch}' : comment.id,
+        userId: comment.userId,
+        userName: comment.userName,
+        userAvatar: comment.userAvatar,
+        text: comment.text,
+        timestamp: comment.timestamp,
+      );
+      _mockPostComments[postId]!.insert(0, updatedComment);
+
+      // Increment commentsCount in mock posts list
+      final index = _mockPosts.indexWhere((p) => p.id == postId);
+      if (index != -1) {
+        final post = _mockPosts[index];
+        _mockPosts[index] = PostModel(
+          id: post.id,
+          userId: post.userId,
+          userName: post.userName,
+          userAvatar: post.userAvatar,
+          type: post.type,
+          contentUrl: post.contentUrl,
+          caption: post.caption,
+          visibilityScope: post.visibilityScope,
+          location: post.location,
+          createdAt: post.createdAt,
+          contestId: post.contestId,
+          likes: post.likes,
+          commentsCount: post.commentsCount + 1,
+        );
+        _mockPostsStreamController.add(List.from(_mockPosts));
+      }
+
+      _mockPostCommentsStreamController.add(Map.from(_mockPostComments));
+      return;
+    }
+    try {
+      final postRef = _db!.collection('posts').doc(postId);
+      final commentRef = postRef.collection('comments').doc();
+      await _db!.runTransaction((transaction) async {
+        final postSnap = await transaction.get(postRef);
+        if (!postSnap.exists) return;
+        final currentCount = postSnap.data()?['commentsCount'] ?? 0;
+        transaction.set(commentRef, comment.toMap());
+        transaction.update(postRef, {
+          'commentsCount': currentCount + 1,
+        });
+      });
+    } catch (e) {
+      debugPrint('Failed to add post comment: $e');
+    }
+  }
+
+  Stream<List<CommentModel>> getPostComments(String postId) async* {
+    if (!_isInitialized || _db == null) {
+      if (!_mockPostComments.containsKey(postId)) {
+        _mockPostComments[postId] = [];
+      }
+      yield _mockPostComments[postId]!;
+      yield* _mockPostCommentsStreamController.stream.map((map) => map[postId] ?? []);
+      return;
+    }
+    yield* _db!
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) => CommentModel.fromFirestore(doc)).toList();
+    });
+  }
+
+  Stream<PostModel?> getPostStream(String postId) async* {
+    if (!_isInitialized || _db == null) {
+      final index = _mockPosts.indexWhere((p) => p.id == postId);
+      final fallbackPost = index != -1 ? _mockPosts[index] : PostModel(
+        id: postId,
+        userId: 'current_user',
+        userName: 'FeastVote Player',
+        userAvatar: '',
+        type: 'text',
+        contentUrl: '',
+        caption: 'Placeholder post',
+        visibilityScope: 'global',
+        location: '',
+        createdAt: DateTime.now(),
+      );
+      yield fallbackPost;
+      yield* _mockPostsStreamController.stream.map((posts) {
+        final idx = posts.indexWhere((p) => p.id == postId);
+        return idx != -1 ? posts[idx] : fallbackPost;
+      });
+      return;
+    }
+    yield* _db!.collection('posts').doc(postId).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return PostModel.fromFirestore(doc);
+    });
+  }
+
+  Stream<List<PostModel>> getAllPosts() async* {
+    if (!_isInitialized || _db == null) {
+      if (_mockPosts.isEmpty) {
+        _mockPosts.addAll([
+          PostModel(
+            id: 'mock_p1',
+            userId: 'u1',
+            userName: 'Sophie France',
+            userAvatar: 'https://i.pravatar.cc/150?u=4',
+            type: 'image',
+            contentUrl: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836',
+            caption: 'Fresh and delicious meal prepared today!',
+            visibilityScope: 'global',
+            location: 'Paris, France',
+            createdAt: DateTime.now().subtract(const Duration(hours: 3)),
+            likes: ['u2', 'current_user'],
+            commentsCount: 2,
+          ),
+          PostModel(
+            id: 'mock_p2',
+            userId: 'u2',
+            userName: 'Wei China',
+            userAvatar: 'https://i.pravatar.cc/150?u=5',
+            type: 'text',
+            contentUrl: '',
+            caption: 'Excited to participate in the upcoming street food challenge! Who is with me?',
+            visibilityScope: 'global',
+            location: 'Beijing, China',
+            createdAt: DateTime.now().subtract(const Duration(hours: 6)),
+            likes: ['u1'],
+            commentsCount: 1,
+          ),
+        ]);
+      }
+      final sorted = List<PostModel>.from(_mockPosts);
+      sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      yield sorted;
+      yield* _mockPostsStreamController.stream.map((posts) {
+        final sortedPosts = List<PostModel>.from(posts);
+        sortedPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return sortedPosts;
+      });
+      return;
+    }
+    yield* _db!
+        .collection('posts')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) => PostModel.fromFirestore(doc)).toList();
+    });
   }
 }

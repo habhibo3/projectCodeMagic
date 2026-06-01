@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../theme/app_theme.dart';
-import 'contest_list_screen.dart';
+import '../main.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -15,12 +15,12 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // Navigate to the main app after the animation completes
+    // Navigate to the main auth wrapper after the animation completes
     Future.delayed(const Duration(milliseconds: 3500), () {
       if (mounted) {
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => const ContestListScreen(),
+            pageBuilder: (context, animation, secondaryAnimation) => const AuthWrapper(),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },

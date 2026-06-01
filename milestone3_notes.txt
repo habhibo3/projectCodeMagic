@@ -1,0 +1,17 @@
+# Milestone 3 Accomplishments - Progress Update
+
+## Phase 1: Fix White-on-White Text Globally (COMPLETED)
+- Checked and modified Choice Chips and Filter Chips in `create_post_screen.dart`.
+- Fixed style borders and backgrounds (`backgroundColor: const Color(0xFF151515)` and `side: BorderSide(color: active ? AppTheme.primary : Colors.white12)`) to make contrast sharp and legible in dark-mode context.
+
+## Phase 2: Profile Picture System (COMPLETED)
+- Added dependencies: `firebase_storage: ^13.3.0` and `image_picker: ^1.1.2`.
+- Run and verified `flutter pub get` successful resolving constraint issues.
+- Updated user models to make profile picture initial states empty (`photoURL: ''`) instead of dummy pravatar seeding.
+- Added `uploadProfilePhoto(uid, File)` in `firebase_service.dart`.
+- Added `uploadMyProfilePhoto(File)` in `ranking_engine.dart` with transactional profile updates synced across current contest entries automatically.
+- Updated `_UserProfileTab` and `_HomeTab` leading avatars inside `contest_list_screen.dart` with real-time picking (`ImagePicker`), storage uploading, and automatic fallback placeholders (person silhouette icon).
+- Safe build context async guards fully resolved.
+
+---
+## Ready for next: Phase 3 (Real Composer & Pickers) and Phase 4 (Social Detail Views)

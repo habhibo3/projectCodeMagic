@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import '../data/firebase_service.dart';
 import '../data/live_session_service.dart';
@@ -7,6 +9,8 @@ import '../models/entry.dart';
 import '../models/comment.dart';
 import '../models/review.dart';
 import '../models/user.dart';
+import '../models/post.dart';
+import '../models/notification.dart';
 
 class VoteActivity {
   final String userName;
@@ -40,10 +44,16 @@ class RankingEngine extends ChangeNotifier {
   String? _currentContestId;
   String? _lastViewedEntryId;
 
+  bool _isSimulationActive = false;
+  Timer? _simulationTimer;
+  final List<Timer> _activeTimers = [];
+
   RankingEngine({required this.currentUserId}) {
     _listenToContests();
     _listenToCurrentUser();
   }
+
+  bool get isSimulationActive => _isSimulationActive;
 
   UserModel? get currentUserProfile => _currentUserProfile;
   List<ContestModel> get contests => List.unmodifiable(_contests);
@@ -73,6 +83,10 @@ class RankingEngine extends ChangeNotifier {
     });
   }
 
+  void setCurrentContest(String contestId) {
+    _currentContestId = contestId;
+  }
+
   void _listenToCurrentUser() {
     _userSub?.cancel();
     _userSub = _firebaseService.getUserProfile(currentUserId).listen((profile) {
@@ -97,6 +111,7 @@ class RankingEngine extends ChangeNotifier {
 
       if (success) {
         final voterFlag = _currentUserProfile?.countryFlag ?? '🌍';
+        final voterName = _currentUserProfile?.displayName ?? 'A viewer';
         _voteActivity.insert(0, VoteActivity(
           userName: 'You',
           countryFlag: voterFlag,
@@ -105,6 +120,27 @@ class RankingEngine extends ChangeNotifier {
         ));
         if (_voteActivity.length > 20) _voteActivity.removeLast();
         notifyListeners();
+
+        // 1. Schedule client-mediated sliding window decrement
+        final contestId = _currentContestId!;
+        final timer = Timer(const Duration(seconds: 10), () async {
+          await _firebaseService.decrementWindowVote(contestId, entryId);
+        });
+        _activeTimers.add(timer);
+
+        // 2. Add real-time activity alert to Firestore
+        final entryIndex = _entries.indexWhere((e) => e.id == entryId);
+        final entryName = entryIndex != -1 ? _entries[entryIndex].userName : 'Contestant';
+        final notify = NotificationModel(
+          id: '',
+          title: 'New Vote!',
+          message: '$voterName voted for $entryName\'s entry!',
+          type: 'vote',
+          timestamp: DateTime.now(),
+          senderName: voterName,
+          senderAvatar: _currentUserProfile?.photoURL ?? 'https://i.pravatar.cc/150?u=99',
+        );
+        _firebaseService.sendNotification(notify);
       }
       return success;
     }
@@ -167,9 +203,68 @@ class RankingEngine extends ChangeNotifier {
     );
   }
 
+  Future<void> uploadMyProfilePhoto(File file) async {
+    final downloadUrl = await _firebaseService.uploadProfilePhoto(currentUserId, file);
+    if (downloadUrl.isNotEmpty) {
+      final profile = _currentUserProfile;
+      if (profile != null) {
+        await _firebaseService.syncPostUserProfile(
+          currentUserId,
+          displayName: profile.displayName,
+          photoURL: downloadUrl,
+        );
+      }
+      if (_currentContestId != null && profile != null) {
+        await _firebaseService.syncEntryUserProfile(
+          _currentContestId!,
+          currentUserId,
+          displayName: profile.displayName,
+          photoURL: downloadUrl,
+          countryFlag: profile.countryFlag,
+          zip: profile.zip,
+          city: profile.city,
+          state: profile.state,
+          country: profile.country,
+        );
+      }
+      // Update local profile state
+      if (_currentUserProfile != null) {
+        _currentUserProfile = UserModel(
+          uid: _currentUserProfile!.uid,
+          displayName: _currentUserProfile!.displayName,
+          email: _currentUserProfile!.email,
+          photoURL: downloadUrl,
+          role: _currentUserProfile!.role,
+          country: _currentUserProfile!.country,
+          countryFlag: _currentUserProfile!.countryFlag,
+          bio: _currentUserProfile!.bio,
+          createdAt: _currentUserProfile!.createdAt,
+          totalVotesCast: _currentUserProfile!.totalVotesCast,
+          subscriptionLevel: _currentUserProfile!.subscriptionLevel,
+          zip: _currentUserProfile!.zip,
+          city: _currentUserProfile!.city,
+          state: _currentUserProfile!.state,
+          location: _currentUserProfile!.location,
+        );
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<String> uploadPostMedia(File file) async {
+    return await _firebaseService.uploadPostMedia(currentUserId, file);
+  }
+
   Future<void> updateMyDisplayName(String displayName) async {
     await _firebaseService.updateUserDisplayName(currentUserId, displayName);
     final profile = _currentUserProfile;
+    if (profile != null) {
+      await _firebaseService.syncPostUserProfile(
+        currentUserId,
+        displayName: displayName.trim(),
+        photoURL: profile.photoURL,
+      );
+    }
     if (_currentContestId != null && profile != null) {
       await _firebaseService.syncEntryUserProfile(
         _currentContestId!,
@@ -177,6 +272,10 @@ class RankingEngine extends ChangeNotifier {
         displayName: displayName.trim(),
         photoURL: profile.photoURL,
         countryFlag: profile.countryFlag,
+        zip: profile.zip,
+        city: profile.city,
+        state: profile.state,
+        country: profile.country,
       );
     }
     if (_lastViewedEntryId != null) {
@@ -194,10 +293,45 @@ class RankingEngine extends ChangeNotifier {
         displayName: profile.displayName,
         photoURL: profile.photoURL,
         countryFlag: countryFlag,
+        zip: profile.zip,
+        city: profile.city,
+        state: profile.state,
+        country: country,
       );
     }
     if (_lastViewedEntryId != null) {
       trackEntryView(_lastViewedEntryId!);
+    }
+  }
+
+  Future<void> updateMyLocation({
+    required String zip,
+    required String city,
+    required String state,
+    required String country,
+    required String countryFlag,
+  }) async {
+    await _firebaseService.updateUserLocation(
+      uid: currentUserId,
+      zip: zip,
+      city: city,
+      state: state,
+      country: country,
+      countryFlag: countryFlag,
+    );
+    final profile = _currentUserProfile;
+    if (_currentContestId != null && profile != null) {
+      await _firebaseService.syncEntryUserProfile(
+        _currentContestId!,
+        currentUserId,
+        displayName: profile.displayName,
+        photoURL: profile.photoURL,
+        countryFlag: countryFlag,
+        zip: zip.trim(),
+        city: city.trim(),
+        state: state.trim(),
+        country: country.trim(),
+      );
     }
   }
 
@@ -292,12 +426,226 @@ class RankingEngine extends ChangeNotifier {
     );
   }
 
+  Stream<List<PostModel>> getMyPosts() {
+    return _firebaseService.getUserPosts(currentUserId);
+  }
+
+  Future<bool> assignPostToContest(String postId, String contestId) async {
+    final success = await _firebaseService.assignPostToContest(postId, contestId);
+    if (success) {
+      final profile = _currentUserProfile;
+      final notify = NotificationModel(
+        id: '',
+        title: 'User Joined Contest',
+        message: '${profile?.displayName ?? 'A contestant'} joined the contest with an existing post!',
+        type: 'join',
+        timestamp: DateTime.now(),
+        senderName: profile?.displayName ?? 'Contestant',
+        senderAvatar: profile?.photoURL ?? 'https://i.pravatar.cc/150?u=99',
+      );
+      await _firebaseService.sendNotification(notify);
+      loadContestEntries(contestId);
+    }
+    return success;
+  }
+
+  Future<void> createPost({
+    required String type,
+    required String contentUrl,
+    required String caption,
+    required String visibilityScope,
+  }) async {
+    final profile = _currentUserProfile;
+    final postId = 'post_${DateTime.now().millisecondsSinceEpoch}';
+    final location = profile?.location ?? '${profile?.city}, ${profile?.country}';
+    final post = PostModel(
+      id: postId,
+      userId: currentUserId,
+      userName: profile?.displayName ?? 'Anonymous',
+      userAvatar: profile?.photoURL ?? 'https://i.pravatar.cc/150?u=99',
+      type: type,
+      contentUrl: contentUrl,
+      caption: caption,
+      visibilityScope: visibilityScope,
+      location: location,
+      createdAt: DateTime.now(),
+    );
+
+    await _firebaseService.createPost(post);
+  }
+
+  Future<void> createPostAndJoinContest({
+    required String type,
+    required String contentUrl,
+    required String caption,
+    required String visibilityScope,
+    required String? contestId,
+  }) async {
+    final profile = _currentUserProfile;
+    final postId = 'post_${DateTime.now().millisecondsSinceEpoch}';
+    final location = profile?.location ?? '${profile?.city}, ${profile?.country}';
+    final post = PostModel(
+      id: postId,
+      userId: currentUserId,
+      userName: profile?.displayName ?? 'Anonymous Contestant',
+      userAvatar: profile?.photoURL ?? 'https://i.pravatar.cc/150?u=99',
+      type: type,
+      contentUrl: contentUrl,
+      caption: caption,
+      visibilityScope: visibilityScope,
+      location: location,
+      createdAt: DateTime.now(),
+      contestId: contestId,
+    );
+
+    await _firebaseService.createPostAndJoinContest(post, contestId);
+
+    // Publish join notification
+    final notify = NotificationModel(
+      id: '',
+      title: 'New Entry Joined!',
+      message: '${profile?.displayName ?? 'A contestant'} joined the contest with a new $type post!',
+      type: 'join',
+      timestamp: DateTime.now(),
+      senderName: profile?.displayName ?? 'Contestant',
+      senderAvatar: profile?.photoURL ?? 'https://i.pravatar.cc/150?u=99',
+    );
+    await _firebaseService.sendNotification(notify);
+  }
+
+  Future<void> deletePost(String postId) async {
+    await _firebaseService.deletePost(postId);
+  }
+
+  Future<void> updatePost(String postId, {
+    String? type,
+    String? contentUrl,
+    String? caption,
+    String? visibilityScope,
+    String? location,
+  }) async {
+    final updates = <String, dynamic>{};
+    if (type != null) updates['type'] = type;
+    if (contentUrl != null) updates['contentUrl'] = contentUrl;
+    if (caption != null) updates['caption'] = caption;
+    if (visibilityScope != null) updates['visibilityScope'] = visibilityScope;
+    if (location != null) updates['location'] = location;
+    await _firebaseService.updatePost(postId, updates);
+  }
+
+  Future<void> createContest(ContestModel contest) async {
+    await _firebaseService.createContest(contest);
+  }
+
+  Stream<List<ContestEntry>> watchGlobalFeed() {
+    return _firebaseService.watchGlobalFeedEntries();
+  }
+
+  Stream<List<NotificationModel>> watchNotifications() {
+    return _firebaseService.watchNotifications();
+  }
+
+  Stream<List<PostModel>> watchAllPosts() {
+    return _firebaseService.getAllPosts();
+  }
+
+  Future<void> toggleLikePost(String postId) async {
+    await _firebaseService.toggleLikePost(postId, currentUserId);
+  }
+
+  Stream<List<CommentModel>> getPostComments(String postId) {
+    return _firebaseService.getPostComments(postId);
+  }
+
+  Future<void> addPostComment(String postId, String text) async {
+    final profile = _currentUserProfile;
+    final comment = CommentModel(
+      id: '',
+      userId: currentUserId,
+      userName: profile?.displayName ?? 'You',
+      userAvatar: profile?.photoURL ?? '',
+      text: text,
+      timestamp: DateTime.now(),
+    );
+    await _firebaseService.addPostComment(postId, comment);
+  }
+
+  Stream<PostModel?> getPostStream(String postId) {
+    return _firebaseService.getPostStream(postId);
+  }
+
+  Stream<UserModel?> watchUserProfile(String userId) {
+    return _firebaseService.getUserProfile(userId);
+  }
+
+  Stream<List<PostModel>> getUserPosts(String userId) {
+    return _firebaseService.getUserPosts(userId);
+  }
+
+  // -------------------------------------------------------------------------
+  // INTERACTIVE BACKGROUND TRAFFIC SIMULATOR
+  // -------------------------------------------------------------------------
+  void toggleSimulation(bool isActive) {
+    _isSimulationActive = isActive;
+    _simulationTimer?.cancel();
+    notifyListeners();
+
+    if (_isSimulationActive) {
+      _simulationTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
+        if (_currentContestId == null || _entries.isEmpty) return;
+
+        // Choose a random entry to vote on
+        final randomIndex = math.Random().nextInt(_entries.length);
+        final entry = _entries[randomIndex];
+
+        // Choose a random seeder user ID
+        final mockUserIds = ['u1', 'u2', 'u3', 'u4', 'u5'];
+        final randomUserIndex = math.Random().nextInt(mockUserIds.length);
+        final mockUserId = mockUserIds[randomUserIndex];
+
+        // Fetch user flag & name
+        final profileInfo = await _firebaseService.getUserGeoProfile(mockUserId);
+
+        final success = await _firebaseService.addVote(
+          _currentContestId!,
+          entry.id,
+          mockUserId,
+        );
+
+        if (success) {
+          final contestId = _currentContestId!;
+          final entryId = entry.id;
+          final mockTimer = Timer(const Duration(seconds: 10), () async {
+            await _firebaseService.decrementWindowVote(contestId, entryId);
+          });
+          _activeTimers.add(mockTimer);
+
+          // Stream notification
+          final notify = NotificationModel(
+            id: '',
+            title: 'New Vote!',
+            message: '${profileInfo.displayName} voted for ${entry.userName}\'s entry!',
+            type: 'vote',
+            timestamp: DateTime.now(),
+            senderName: profileInfo.displayName,
+            senderAvatar: 'https://i.pravatar.cc/150?u=$mockUserId',
+          );
+          await _firebaseService.sendNotification(notify);
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
     _contestsSub?.cancel();
     _entriesSub?.cancel();
     _userSub?.cancel();
     _followedSub?.cancel();
+    _simulationTimer?.cancel();
+    for (final timer in _activeTimers) {
+      timer.cancel();
+    }
     super.dispose();
   }
 }

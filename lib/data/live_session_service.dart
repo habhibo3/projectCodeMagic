@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../models/cohost_invite.dart';
+import '../models/comment.dart';
 
 /// Real-time co-host signaling (Firestore) — pairs with Agora uid 100 (host) / 200 (co-host).
 class LiveSessionService {
@@ -178,5 +179,48 @@ class LiveSessionService {
         .doc(entryId)
         .collection('live')
         .doc('session');
+  }
+
+  // ── LIVE STREAM COMMENTS ──
+
+  CollectionReference<Map<String, dynamic>> _liveCommentsRef(
+      String contestId, String entryId) {
+    return _sessionRef(contestId, entryId).collection('comments');
+  }
+
+  /// Watch live stream comments in real-time.
+  Stream<List<CommentModel>> watchLiveComments(String contestId, String entryId) {
+    if (!_isInitialized || _db == null) return Stream.value([]);
+    return _liveCommentsRef(contestId, entryId)
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((doc) => CommentModel.fromFirestore(doc))
+            .toList());
+  }
+
+  /// Add a comment to the live stream.
+  Future<void> addLiveComment(
+      String contestId, String entryId, CommentModel comment) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _liveCommentsRef(contestId, entryId).add(comment.toMap());
+    } catch (e) {
+      debugPrint('Failed to add live comment: $e');
+    }
+  }
+
+  /// Clear/delete all comments for this live stream session.
+  Future<void> clearLiveComments(String contestId, String entryId) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      final snap = await _liveCommentsRef(contestId, entryId).get();
+      for (final doc in snap.docs) {
+        await doc.reference.delete();
+      }
+      debugPrint('Cleared all live comments for entry $entryId');
+    } catch (e) {
+      debugPrint('Failed to clear live comments: $e');
+    }
   }
 }

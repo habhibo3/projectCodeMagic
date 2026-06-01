@@ -8,12 +8,12 @@ void main() async {
   
   final db = FirebaseFirestore.instance;
   
-  print('Starting Firestore stats reset...');
+  debugPrint('Starting Firestore stats reset...');
   
   final contests = await db.collection('contests').get();
   
   for (var contest in contests.docs) {
-    print('Resetting contest: ${contest.id}');
+    debugPrint('Resetting contest: ${contest.id}');
     await contest.reference.update({
       'participantCount': 0,
       'totalVotes': 0,
@@ -24,7 +24,7 @@ void main() async {
     
     final entries = await contest.reference.collection('entries').get();
     for (var entry in entries.docs) {
-      print('  Resetting entry: ${entry.id}');
+      debugPrint('  Resetting entry: ${entry.id}');
       await entry.reference.update({
         'totalVotes': 0,
         'windowVotes': 0,
@@ -35,5 +35,5 @@ void main() async {
     }
   }
   
-  print('Done!');
+  debugPrint('Done!');
 }

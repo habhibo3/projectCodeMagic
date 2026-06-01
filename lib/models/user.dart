@@ -11,6 +11,11 @@ class UserModel {
   final String bio;
   final DateTime createdAt;
   final int totalVotesCast;
+  final String subscriptionLevel; // 'free', 'premium'
+  final String location; // City/State/Zip string or description
+  final String zip;
+  final String city;
+  final String state;
 
   UserModel({
     required this.uid,
@@ -23,6 +28,11 @@ class UserModel {
     required this.bio,
     required this.createdAt,
     required this.totalVotesCast,
+    this.subscriptionLevel = 'free',
+    this.location = 'Tunisia',
+    this.zip = '75001',
+    this.city = 'Tunis',
+    this.state = 'Tunis State',
   });
 
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
@@ -33,7 +43,7 @@ class UserModel {
       uid: doc.id,
       displayName: data['displayName'] ?? 'Anonymous User',
       email: data['email'] ?? '',
-      photoURL: data['photoURL'] ?? 'https://i.pravatar.cc/150?u=anonymous',
+      photoURL: data['photoURL'] ?? '',
       role: data['role'] ?? 'voter',
       country: data['country'] ?? 'Global',
       countryFlag: data['countryFlag'] ?? '🌍',
@@ -42,6 +52,11 @@ class UserModel {
           ? createdAtData.toDate() 
           : DateTime.now(),
       totalVotesCast: data['totalVotesCast'] ?? 0,
+      subscriptionLevel: data['subscriptionLevel'] ?? 'free',
+      location: data['location'] ?? 'Tunisia',
+      zip: data['zip'] ?? '75001',
+      city: data['city'] ?? 'Tunis',
+      state: data['state'] ?? 'Tunis State',
     );
   }
 
@@ -56,6 +71,11 @@ class UserModel {
       'bio': bio,
       'createdAt': FieldValue.serverTimestamp(),
       'totalVotesCast': totalVotesCast,
+      'subscriptionLevel': subscriptionLevel,
+      'location': location,
+      'zip': zip,
+      'city': city,
+      'state': state,
     };
   }
 }

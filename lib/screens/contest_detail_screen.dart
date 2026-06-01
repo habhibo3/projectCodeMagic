@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../engine/ranking_engine.dart';
 import '../models/entry.dart';
+import '../models/post.dart';
 import '../screens/entry_post_screen.dart';
+import '../screens/create_post_screen.dart';
 import '../screens/live_stream_screen.dart';
 import '../theme/app_theme.dart';
-import '../widgets/cohost_invite_banner.dart';
 
 class ContestDetailScreen extends StatefulWidget {
   final ContestModel contest;
@@ -20,7 +20,6 @@ class ContestDetailScreen extends StatefulWidget {
 
 class _ContestDetailScreenState extends State<ContestDetailScreen>
     with SingleTickerProviderStateMixin {
-  bool _hasJoined = false;
   late TabController _tabController;
 
   @override
@@ -28,8 +27,9 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<RankingEngine>(context, listen: false)
-          .loadContestEntries(widget.contest.id);
+      final engine = Provider.of<RankingEngine>(context, listen: false);
+      engine.setCurrentContest(widget.contest.id);
+      engine.loadContestEntries(widget.contest.id);
     });
   }
 
@@ -180,7 +180,6 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
         return ListView(
           padding: EdgeInsets.zero,
           children: [
-            CoHostInviteBanner(contest: widget.contest),
             _buildTimerAndFollow(engine),
             _buildStatsRow(liveContest),
             const SizedBox(height: 16),
@@ -216,7 +215,7 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('ENDS IN', style: TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1)),
-              Text(widget.contest.endsIn,
+              Text(widget.contest.calculatedEndsIn,
                   style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1)),
             ],
           ),
@@ -425,9 +424,188 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
     );
   }
 
+  void _showJoinOptions(BuildContext context, RankingEngine engine) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF151515),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) {
+        return StreamBuilder<List<PostModel>>(
+          stream: engine.getMyPosts(),
+          builder: (context, snapshot) {
+            final posts = snapshot.data ?? [];
+            return Container(
+              padding: const EdgeInsets.all(20),
+              height: 380,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'JOIN CONTEST ARENA',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Assign one of your existing posts, or publish a new one. Remember, 1 post can join 1 contest only!',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: posts.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(LucideIcons.image, color: Colors.white24, size: 40),
+                                const SizedBox(height: 8),
+                                const Text('You haven\'t created any posts yet.', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                                const SizedBox(height: 12),
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                                  icon: const Icon(LucideIcons.plus, size: 16, color: Colors.white),
+                                  label: const Text('Create New Post', style: TextStyle(color: Colors.white)),
+                                  onPressed: () {
+                                    Navigator.pop(sheetCtx);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (_) => const CreatePostScreen()),
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: posts.length,
+                            itemBuilder: (ctx, idx) {
+                              final post = posts[idx];
+                              final isAssigned = post.contestId != null && post.contestId!.isNotEmpty;
+                              return Container(
+                                width: 140,
+                                margin: const EdgeInsets.only(right: 12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF222222),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.white12),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                      child: post.type == 'text'
+                                          ? Container(
+                                              height: 80,
+                                              color: Colors.white12,
+                                              padding: const EdgeInsets.all(8),
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                post.contentUrl,
+                                                maxLines: 3,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 10, color: Colors.white),
+                                              ),
+                                            )
+                                          : Image.network(
+                                              post.contentUrl,
+                                              height: 80,
+                                              width: double.infinity,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => Container(height: 80, color: Colors.white12),
+                                            ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: Text(
+                                        post.caption,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: SizedBox(
+                                        width: double.infinity,
+                                        height: 28,
+                                        child: ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: isAssigned ? Colors.white24 : AppTheme.primary,
+                                            padding: EdgeInsets.zero,
+                                          ),
+                                          onPressed: isAssigned
+                                              ? null
+                                              : () async {
+                                                  Navigator.pop(sheetCtx);
+                                                  final ok = await engine.assignPostToContest(post.id, widget.contest.id);
+                                                  if (!context.mounted) return;
+                                                  if (ok) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text('Successfully assigned post to contest! 🔥'),
+                                                        backgroundColor: Colors.green,
+                                                        behavior: SnackBarBehavior.floating,
+                                                      ),
+                                                    );
+                                                  } else {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text('Failed to join. Remember: 1 post = 1 contest only!'),
+                                                        backgroundColor: Colors.redAccent,
+                                                        behavior: SnackBarBehavior.floating,
+                                                      ),
+                                                    );
+                                                  }
+                                                },
+                                          child: Text(
+                                            isAssigned ? 'Assigned' : 'Select',
+                                            style: const TextStyle(fontSize: 10, color: Colors.white),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  if (posts.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppTheme.primary),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(LucideIcons.plus, size: 16, color: AppTheme.primary),
+                        label: const Text('Create New Post Instead', style: TextStyle(color: AppTheme.primary)),
+                        onPressed: () {
+                          Navigator.pop(sheetCtx);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const CreatePostScreen()),
+                          );
+                        },
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildBottomAction() {
     final engine = Provider.of<RankingEngine>(context);
-    final hasJoined = _hasJoined || engine.entries.any((e) => e.userId == engine.currentUserId);
+    final hasJoined = engine.entries.any((e) => e.userId == engine.currentUserId);
 
     return Container(
       padding: EdgeInsets.only(
@@ -444,45 +622,7 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
         behavior: HitTestBehavior.opaque,
         onTap: () {
           if (hasJoined) return;
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: const Color(0xFF151515),
-            shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-            builder: (sheetCtx) => Container(
-              padding: const EdgeInsets.all(24),
-              height: 260,
-              child: Column(
-                children: [
-                  const Icon(LucideIcons.checkCircle, color: Colors.green, size: 48),
-                  const SizedBox(height: 12),
-                  const Text('Join & Start Voting!',
-                      style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text('Your entry will go live and you can vote for others!',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70)),
-                  const Spacer(),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26))),
-                      onPressed: () {
-                        setState(() => _hasJoined = true);
-                        final engine = Provider.of<RankingEngine>(context, listen: false);
-                        engine.addMockUserEntry();
-                        Navigator.pop(sheetCtx);
-                      },
-                      child: const Text("Let's Go! 🔥", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
+          _showJoinOptions(context, engine);
         },
         child: Container(
           height: 54,
@@ -525,7 +665,7 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
                     ],
                   )
                 : const Text(
-                    'Join Live & Vote',
+                    'Join Contest & Vote',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,

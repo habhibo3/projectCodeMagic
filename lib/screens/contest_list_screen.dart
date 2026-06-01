@@ -1,13 +1,111 @@
-import 'dart:developer' as developer;
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
+import '../data/auth_service.dart';
 import '../data/locale_country.dart';
-import '../data/mock_data.dart';
 import '../engine/ranking_engine.dart';
 import '../models/entry.dart';
+import '../models/post.dart';
+import '../models/user.dart';
+import '../models/notification.dart';
 import '../theme/app_theme.dart';
+import '../widgets/avatar_helper.dart';
 import 'contest_detail_screen.dart';
+import 'create_post_screen.dart';
+import 'create_contest_screen.dart';
+import 'entry_post_screen.dart';
+import 'post_detail_screen.dart';
+import 'public_profile_screen.dart';
+import 'feed_screen.dart';
+import 'edit_post_screen.dart';
+import 'package:video_player/video_player.dart';
+import 'dart:io';
+
+class VideoPlayerWidget extends StatefulWidget {
+  final String videoUrl;
+  final bool isLocal;
+
+  const VideoPlayerWidget({super.key, required this.videoUrl, required this.isLocal});
+
+  @override
+  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+}
+
+class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
+  late VideoPlayerController _controller;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideo();
+  }
+
+  Future<void> _initializeVideo() async {
+    try {
+      if (widget.isLocal) {
+        _controller = VideoPlayerController.file(File(widget.videoUrl));
+      } else {
+        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
+      }
+      await _controller.initialize();
+      setState(() {
+        _isInitialized = true;
+      });
+    } catch (e) {
+      debugPrint('Error initializing video: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isInitialized) {
+      return Container(
+        height: 240,
+        color: Colors.black,
+        child: const Center(
+          child: CircularProgressIndicator(color: AppTheme.primary),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          if (_controller.value.isPlaying) {
+            _controller.pause();
+          } else {
+            _controller.play();
+          }
+        });
+      },
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          AspectRatio(
+            aspectRatio: _controller.value.aspectRatio,
+            child: VideoPlayer(_controller),
+          ),
+          if (!_controller.value.isPlaying)
+            const CircleAvatar(
+              radius: 28,
+              backgroundColor: Colors.black54,
+              child: Icon(LucideIcons.play, color: Colors.white, size: 28),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ROOT SHELL — holds the persistent BottomNavigationBar + nested Navigator
@@ -15,16 +113,17 @@ import 'contest_detail_screen.dart';
 class ContestListScreen extends StatefulWidget {
   const ContestListScreen({super.key});
 
+  static final GlobalKey<NavigatorState> homeNavKey = GlobalKey<NavigatorState>();
+
   @override
   State<ContestListScreen> createState() => _ContestListScreenState();
 }
 
 class _ContestListScreenState extends State<ContestListScreen> {
   int _bottomNavIndex = 0;
-  final GlobalKey<NavigatorState> _homeNavKey = GlobalKey<NavigatorState>();
 
   late final List<GlobalKey<NavigatorState>> _navKeys = [
-    _homeNavKey,
+    ContestListScreen.homeNavKey,
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
@@ -50,9 +149,18 @@ class _ContestListScreenState extends State<ContestListScreen> {
               key: _navKeys[0],
               onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _HomeTab()),
             ),
-            _buildPlaceholder('Search', LucideIcons.search),
-            _buildPlaceholder('Explore', LucideIcons.compass),
-            _buildPlaceholder('Activity & Notifications', LucideIcons.bell),
+            Navigator(
+              key: _navKeys[1],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _MapTab()),
+            ),
+            Navigator(
+              key: _navKeys[2],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const FeedScreen()),
+            ),
+            Navigator(
+              key: _navKeys[3],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _ActivityTab()),
+            ),
             Navigator(
               key: _navKeys[4],
               onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _UserProfileTab()),
@@ -86,37 +194,10 @@ class _ContestListScreenState extends State<ContestListScreen> {
               },
               items: const [
                 BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
-                BottomNavigationBarItem(icon: Icon(LucideIcons.search), label: 'Search'),
-                BottomNavigationBarItem(icon: Icon(LucideIcons.compass), label: 'Explore'),
+                BottomNavigationBarItem(icon: Icon(LucideIcons.map), label: 'Map'),
+                BottomNavigationBarItem(icon: Icon(LucideIcons.flame), label: 'Explore Feed'),
                 BottomNavigationBarItem(icon: Icon(LucideIcons.bell), label: 'Activity'),
                 BottomNavigationBarItem(icon: Icon(LucideIcons.user), label: 'Profile'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlaceholder(String title, IconData icon) {
-    return Navigator(
-      onGenerateRoute: (_) => MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: const Color(0xFF0A0A0A),
-          appBar: AppBar(
-            backgroundColor: const Color(0xFF0A0A0A),
-            elevation: 0,
-            title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 64, color: Colors.white12),
-                const SizedBox(height: 16),
-                Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
-                const SizedBox(height: 8),
-                const Text('Coming soon in future milestones', style: TextStyle(color: Colors.white54)),
               ],
             ),
           ),
@@ -173,6 +254,9 @@ class _HomeTabState extends State<_HomeTab> {
       builder: (context, engine, child) {
         final filteredContests = _getFilteredContests(engine.contests, engine);
         
+        final profile = engine.currentUserProfile;
+        final hasPhoto = profile != null && profile.photoURL.isNotEmpty;
+
         return Scaffold(
       backgroundColor: const Color(0xFF0A0A0A),
       appBar: AppBar(
@@ -181,8 +265,11 @@ class _HomeTabState extends State<_HomeTab> {
         leading: Padding(
           padding: const EdgeInsets.all(8.0),
           child: CircleAvatar(
-            backgroundImage: const NetworkImage('https://i.pravatar.cc/150?u=99'),
+            backgroundImage: hasPhoto ? AvatarHelper.getSafeAvatarProvider(profile.photoURL) : null,
             backgroundColor: Colors.grey.shade900,
+            child: !hasPhoto 
+                ? const Icon(LucideIcons.user, size: 16, color: Colors.white60) 
+                : null,
           ),
         ),
         title: _isSearching
@@ -235,6 +322,52 @@ class _HomeTabState extends State<_HomeTab> {
           // Contest list / grid
           Expanded(child: _buildContestFeed(filteredContests)),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: AppTheme.primary,
+        foregroundColor: Colors.white,
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Icon(LucideIcons.plus, size: 24),
+        onPressed: () {
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: const Color(0xFF141416),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            builder: (context) => Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(LucideIcons.image, color: Colors.white),
+                    title: const Text('Create Post', style: TextStyle(color: Colors.white)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CreatePostScreen()),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(LucideIcons.trophy, color: Colors.white),
+                    title: const Text('Create Contest', style: TextStyle(color: Colors.white)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CreateContestScreen()),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
       },
@@ -492,7 +625,7 @@ class _HomeTabState extends State<_HomeTab> {
                     children: [
                       const Icon(LucideIcons.clock, size: 14, color: Colors.white54),
                       const SizedBox(width: 6),
-                      Text('Ends in ${contest.endsIn}',
+                      Text('Ends in ${contest.calculatedEndsIn}',
                           style: const TextStyle(fontSize: 12, color: Colors.white54)),
                       const SizedBox(width: 20),
                       const Icon(LucideIcons.users, size: 14, color: Colors.white54),
@@ -633,22 +766,616 @@ class _UserProfileTab extends StatefulWidget {
 
 class _UserProfileTabState extends State<_UserProfileTab> {
   final _nameController = TextEditingController();
+  final _zipController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _stateController = TextEditingController();
   String? _loadedForUid;
+
+  String _formatTimeAgo(DateTime dateTime) {
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inDays >= 7) {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    } else if (difference.inDays >= 1) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inHours >= 1) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes >= 1) {
+      return '${difference.inMinutes}m ago';
+    } else {
+      return 'Just now';
+    }
+  }
+
+  Widget _buildVideoPlayer(String videoUrl) {
+    if (videoUrl.startsWith('/data/user/')) {
+      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: true);
+    } else {
+      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: false);
+    }
+  }
+
+  Widget _buildPostCard(BuildContext context, PostModel post, RankingEngine engine) {
+    final viewer = engine.currentUserProfile;
+    final isLiked = viewer != null && post.likes.contains(viewer.uid);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PublicProfileScreen(userId: post.userId),
+                      ),
+                    );
+                  },
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundImage: post.userAvatar.isNotEmpty
+                        ? AvatarHelper.getSafeAvatarProvider(post.userAvatar)
+                        : null,
+                    backgroundColor: Colors.grey.shade900,
+                    child: post.userAvatar.isEmpty
+                        ? const Icon(LucideIcons.user, size: 18, color: Colors.white60)
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PublicProfileScreen(userId: post.userId),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          post.userName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            _formatTimeAgo(post.createdAt),
+                            style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(LucideIcons.dot, color: Colors.white38, size: 8),
+                          const SizedBox(width: 4),
+                          const Icon(LucideIcons.mapPin, size: 8, color: Colors.white38),
+                          const SizedBox(width: 2),
+                          Text(
+                            post.location.isNotEmpty ? post.location : 'Unknown',
+                            style: const TextStyle(color: Colors.white38, fontSize: 8, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(LucideIcons.moreHorizontal, color: Colors.white38, size: 16),
+                  onPressed: () {
+                    final isOwner = post.userId == engine.currentUserId;
+                    showModalBottomSheet(
+                      context: context,
+                      backgroundColor: const Color(0xFF141416),
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      builder: (context) => Container(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isOwner) ...[
+                              ListTile(
+                                leading: const Icon(LucideIcons.pencil, color: Colors.white),
+                                title: const Text('Edit post', style: TextStyle(color: Colors.white)),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => EditPostScreen(post: post),
+                                    ),
+                                  );
+                                },
+                              ),
+                              ListTile(
+                                leading: const Icon(LucideIcons.trash2, color: Colors.red),
+                                title: const Text('Delete post', style: TextStyle(color: Colors.red)),
+                                onTap: () async {
+                                  Navigator.pop(context);
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      backgroundColor: const Color(0xFF141416),
+                                      title: const Text('Delete Post', style: TextStyle(color: Colors.white)),
+                                      content: const Text('Are you sure you want to delete this post?', style: TextStyle(color: Colors.white70)),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(context, false),
+                                          child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                                        ),
+                                        TextButton(
+                                          onPressed: () => Navigator.pop(context, true),
+                                          child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirmed == true) {
+                                    await engine.deletePost(post.id);
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Post deleted'), behavior: SnackBarBehavior.floating, backgroundColor: Colors.green),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                              const Divider(color: Colors.white12),
+                            ],
+                            ListTile(
+                              leading: const Icon(LucideIcons.bookmark, color: Colors.white),
+                              title: const Text('Save post', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Post saved!'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(LucideIcons.flag, color: Colors.white),
+                              title: const Text('Report post', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Post reported'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(LucideIcons.link, color: Colors.white),
+                              title: const Text('Copy link', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Link copied to clipboard!'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          // Caption
+          if (post.caption.isNotEmpty && post.type != 'text')
+            Padding(
+              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+              child: Text(
+                post.caption,
+                style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4),
+              ),
+            ),
+
+          // Post Media / Content
+          if (post.type == 'text')
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [const Color(0xFF1C1C1E), const Color(0xFF121214)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                post.contentUrl,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  height: 1.5,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            )
+          else if (post.type == 'image')
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PostDetailScreen(postId: post.id),
+                  ),
+                );
+              },
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(0),
+                child: AvatarHelper.getSafePostImage(
+                  post.contentUrl,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            )
+          else if (post.type == 'video')
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PostDetailScreen(postId: post.id),
+                  ),
+                );
+              },
+              child: Container(
+                width: double.infinity,
+                height: 240,
+                color: Colors.black,
+                child: post.contentUrl.isNotEmpty
+                    ? _buildVideoPlayer(post.contentUrl)
+                    : const Center(
+                        child: CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.black54,
+                          child: Icon(LucideIcons.play, color: Colors.white, size: 24),
+                        ),
+                      ),
+              ),
+            ),
+
+          // Like & Comment Actions
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                // Like
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => engine.toggleLikePost(post.id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isLiked ? Icons.favorite : Icons.favorite_border,
+                          color: isLiked ? AppTheme.primary : Colors.white60,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${post.likes.length}',
+                          style: TextStyle(
+                            color: isLiked ? Colors.white : Colors.white60,
+                            fontWeight: isLiked ? FontWeight.bold : FontWeight.normal,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Comment
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PostDetailScreen(postId: post.id),
+                      ),
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Row(
+                      children: [
+                        const Icon(LucideIcons.messageCircle, color: Colors.white60, size: 18),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${post.commentsCount}',
+                          style: const TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Share
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    showModalBottomSheet(
+                      context: context,
+                      backgroundColor: const Color(0xFF141416),
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      ),
+                      builder: (context) => Container(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ListTile(
+                              leading: const Icon(LucideIcons.share2, color: Colors.white),
+                              title: const Text('Share to...', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Share menu opened'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(LucideIcons.messageCircle, color: Colors.white),
+                              title: const Text('Send in message', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Message feature coming soon'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(LucideIcons.copy, color: Colors.white),
+                              title: const Text('Copy post', style: TextStyle(color: Colors.white)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Post copied to clipboard'), behavior: SnackBarBehavior.floating),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Icon(LucideIcons.share2, color: Colors.white60, size: 18),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Divider
+          const Divider(color: Colors.white12, height: 1),
+        ],
+      ),
+    );
+  }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _zipController.dispose();
+    _cityController.dispose();
+    _stateController.dispose();
     super.dispose();
+  }
+
+  void _showCreateContestDialog(BuildContext context) {
+    final titleCtrl = TextEditingController();
+    final subtitleCtrl = TextEditingController();
+    final prizeCtrl = TextEditingController();
+    String selectedCat = 'Music';
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF151515),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppTheme.primary, width: 1.2),
+              ),
+              title: const Row(
+                children: [
+                  Icon(LucideIcons.trophy, color: AppTheme.primary, size: 24),
+                  SizedBox(width: 12),
+                  Text('Create Test Contest', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('CONTEST TITLE', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: titleCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'e.g. Rock Vocal Challenge',
+                        hintStyle: const TextStyle(color: Colors.white30),
+                        filled: true,
+                        fillColor: const Color(0xFF1E1E1E),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.white12)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    const Text('SUBTITLE', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: subtitleCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'e.g. Battle of the best singers',
+                        hintStyle: const TextStyle(color: Colors.white30),
+                        filled: true,
+                        fillColor: const Color(0xFF1E1E1E),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.white12)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    const Text('PRIZE', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: prizeCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'e.g. \$500 Cash prize',
+                        hintStyle: const TextStyle(color: Colors.white30),
+                        filled: true,
+                        fillColor: const Color(0xFF1E1E1E),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.white12)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    const Text('CATEGORY', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E1E1E),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          dropdownColor: const Color(0xFF1E1E1E),
+                          value: selectedCat,
+                          isExpanded: true,
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          items: ['Music', 'Dance', 'Comedy', 'Art', 'Sports'].map((cat) {
+                            return DropdownMenuItem<String>(
+                              value: cat,
+                              child: Text(cat),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setDialogState(() => selectedCat = val);
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                  onPressed: () async {
+                    final title = titleCtrl.text.trim();
+                    final subtitle = subtitleCtrl.text.trim();
+                    final prize = prizeCtrl.text.trim();
+
+                    if (title.isEmpty || subtitle.isEmpty || prize.isEmpty) return;
+
+                    final imageMap = {
+                      'Music': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81',
+                      'Dance': 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad',
+                      'Comedy': 'https://images.unsplash.com/photo-1527224857830-43a7acc85260',
+                      'Art': 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6',
+                      'Sports': 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2',
+                    };
+
+                    final img = imageMap[selectedCat] ?? imageMap['Music']!;
+                    final contestId = 'c_custom_${DateTime.now().millisecondsSinceEpoch}';
+
+                    await FirebaseFirestore.instance.collection('contests').doc(contestId).set({
+                      'title': title,
+                      'subtitle': subtitle,
+                      'description': 'A custom user-created contest arena. Show your best performance to win!',
+                      'rules': 'Submit a post within the scope rules. Highest votes in the last 10s wins.',
+                      'prize': prize,
+                      'schedule': 'Starts now, live updates.',
+                      'image': img,
+                      'category': selectedCat,
+                      'type': 'Public',
+                      'participantCount': 0,
+                      'totalVotes': 0,
+                      'rating': 5.0,
+                      'reviewCount': 0,
+                      'totalStars': 0,
+                      'endsIn': '24 Hours',
+                    });
+
+                    if (dialogCtx.mounted) {
+                      Navigator.pop(dialogCtx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Custom contest successfully created! 🏆'), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
+                      );
+                    }
+                  },
+                  child: const Text('Create', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
+      backgroundColor: const Color(0xFF09090B),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0A0A0A),
+        backgroundColor: const Color(0xFF09090B),
         elevation: 0,
-        title: const Text('MY PROFILE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1)),
+        centerTitle: true,
+        title: const Text(
+          'MY PROFILE',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 15,
+            letterSpacing: 1.5,
+          ),
+        ),
       ),
       body: Consumer<RankingEngine>(
         builder: (context, engine, child) {
@@ -662,154 +1389,457 @@ class _UserProfileTabState extends State<_UserProfileTab> {
           if (_loadedForUid != user.uid) {
             _loadedForUid = user.uid;
             _nameController.text = user.displayName;
+            _zipController.text = user.zip;
+            _cityController.text = user.city;
+            _stateController.text = user.state;
           }
 
+          final isPremium = user.subscriptionLevel == 'premium';
+
           return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
+                // 1. ELEGANT PROFILE HEADER CARD
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8),
+                      )
+                    ],
+                  ),
                   child: Column(
                     children: [
-                      CircleAvatar(
-                        radius: 50,
-                        backgroundImage: NetworkImage(user.photoURL),
-                        backgroundColor: Colors.white10,
+                      // Avatar with colorful active indicator & glowing ring
+                      GestureDetector(
+                        onTap: () async {
+                          final picker = ImagePicker();
+                          final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 75);
+                          if (picked != null && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Uploading profile photo...'), behavior: SnackBarBehavior.floating),
+                            );
+                            await engine.uploadMyProfilePhoto(File(picked.path));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Profile photo updated successfully!'), behavior: SnackBarBehavior.floating, backgroundColor: Colors.green),
+                              );
+                            }
+                          }
+                        },
+                        child: Stack(
+                          alignment: Alignment.bottomRight,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: isPremium 
+                                    ? const LinearGradient(colors: [Colors.amber, Colors.purpleAccent]) 
+                                    : LinearGradient(colors: [AppTheme.primary, Colors.blueAccent.shade400]),
+                              ),
+                              child: CircleAvatar(
+                                radius: 46,
+                                backgroundImage: user.photoURL.isNotEmpty ? AvatarHelper.getSafeAvatarProvider(user.photoURL) : null,
+                                backgroundColor: Colors.grey.shade900,
+                                child: user.photoURL.isEmpty 
+                                    ? const Icon(LucideIcons.user, size: 40, color: Colors.white60) 
+                                    : null,
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: const BoxDecoration(
+                                color: AppTheme.primary,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(LucideIcons.camera, size: 14, color: Colors.white),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 16),
                       Text(
                         '${user.displayName} ${user.countryFlag}',
-                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        user.country,
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(LucideIcons.mapPin, color: Colors.white38, size: 13),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${user.city}, ${user.country} (${user.zip})',
+                            style: const TextStyle(color: Colors.white54, fontSize: 13),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Device ID: ${engine.currentUserId}',
-                        style: const TextStyle(color: Colors.white38, fontSize: 10),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                         decoration: BoxDecoration(
-                          color: AppTheme.primary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                          color: isPremium
+                              ? Colors.amber.withOpacity(0.12)
+                              : AppTheme.primary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(100),
+                          border: Border.all(
+                            color: isPremium 
+                                ? Colors.amber.withOpacity(0.3) 
+                                : AppTheme.primary.withOpacity(0.3),
+                          ),
                         ),
                         child: Text(
                           user.role.toUpperCase(),
-                          style: const TextStyle(color: AppTheme.primary, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+                          style: TextStyle(
+                            color: isPremium ? Colors.amber : AppTheme.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.5,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
-                const Text(
-                  'YOUR DISPLAY NAME (shown on live stream & invites)',
-                  style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _nameController,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: 'Enter your name',
-                          hintStyle: const TextStyle(color: Colors.white38),
-                          filled: true,
-                          fillColor: const Color(0xFF151515),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.white24),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.white24),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: () async {
-                        final name = _nameController.text.trim();
-                        if (name.isEmpty) return;
-                        await engine.updateMyDisplayName(name);
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Name saved — visible on live stream'),
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                        }
-                      },
-                      child: const Text('Save'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'YOUR COUNTRY (for live audience stats)',
-                  style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Set a different country on each phone when testing with two devices.',
-                  style: TextStyle(color: Colors.white38, fontSize: 11),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: LocaleCountry.pickableCountries.map((c) {
-                    final selected = user.country == c.name;
-                    return FilterChip(
-                      label: Text('${c.flag} ${c.name}'),
-                      selected: selected,
-                      onSelected: (_) => engine.updateMyCountry(c.name, c.flag),
-                      selectedColor: AppTheme.primary.withValues(alpha: 0.35),
-                      checkmarkColor: Colors.white,
-                      labelStyle: TextStyle(
-                        color: selected ? Colors.white : Colors.white70,
-                        fontSize: 11,
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
+
+                // 2. PREMIUM MEMBERSHIP BANNER CARD
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF151515),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white12),
+                    gradient: isPremium
+                        ? LinearGradient(
+                            colors: [
+                              const Color(0xFFD4AF37).withOpacity(0.15),
+                              Colors.purple.withOpacity(0.12),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : LinearGradient(
+                            colors: [
+                              const Color(0xFF1E1E22),
+                              const Color(0xFF141416),
+                            ],
+                          ),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: isPremium
+                          ? const Color(0xFFD4AF37).withOpacity(0.35)
+                          : Colors.white.withOpacity(0.08),
+                      width: 1.5,
+                    ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(LucideIcons.checkSquare, size: 36, color: Colors.greenAccent),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isPremium 
+                              ? const Color(0xFFD4AF37).withOpacity(0.2) 
+                              : Colors.white.withOpacity(0.05),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isPremium ? LucideIcons.crown : LucideIcons.unlock,
+                          color: isPremium ? const Color(0xFFD4AF37) : Colors.white54,
+                          size: 26,
+                        ),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('LIFETIME VOTES CAST', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                            Text(
+                              isPremium ? 'PREMIUM MEMBER 👑' : 'FREE PLAN ACTIVE',
+                              style: TextStyle(
+                                color: isPremium ? const Color(0xFFD4AF37) : Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              isPremium
+                                  ? 'Unlimited Global Scope active!'
+                                  : 'Visibility scope locked at local zip & country.',
+                              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch.adaptive(
+                        activeColor: const Color(0xFFD4AF37),
+                        value: isPremium,
+                        onChanged: (val) async {
+                          final newLevel = val ? 'premium' : 'free';
+                          await FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(user.uid)
+                              .update({'subscriptionLevel': newLevel});
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Membership upgraded to [${newLevel.toUpperCase()}]!'),
+                                behavior: SnackBarBehavior.floating,
+                                backgroundColor: val ? Colors.purple : Colors.grey.shade900,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 3. PROFILE SETTINGS UNIFIED CARD
+                const Text(
+                  'ACCOUNT DETAILS',
+                  style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Display Name Input
+                      const Text(
+                        'DISPLAY NAME',
+                        style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _nameController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: 'Your Display Name',
+                                hintStyle: const TextStyle(color: Colors.white24),
+                                filled: true,
+                                fillColor: const Color(0xFF1C1C1E),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              elevation: 0,
+                            ),
+                            onPressed: () async {
+                              final name = _nameController.text.trim();
+                              if (name.isEmpty) return;
+                              await engine.updateMyDisplayName(name);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Display name updated successfully!'),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
+                            child: const Text('Save', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Location Scope Details
+                      const Text(
+                        'LOCATION LIMITS (ZIP / CITY / STATE)',
+                        style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: TextField(
+                              controller: _zipController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: 'Zip Code',
+                                hintStyle: const TextStyle(color: Colors.white24),
+                                filled: true,
+                                fillColor: const Color(0xFF1C1C1E),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 4,
+                            child: TextField(
+                              controller: _cityController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: 'City',
+                                hintStyle: const TextStyle(color: Colors.white24),
+                                filled: true,
+                                fillColor: const Color(0xFF1C1C1E),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 4,
+                            child: TextField(
+                              controller: _stateController,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              decoration: InputDecoration(
+                                hintText: 'State',
+                                hintStyle: const TextStyle(color: Colors.white24),
+                                filled: true,
+                                fillColor: const Color(0xFF1C1C1E),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 44,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF1C1C1E),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: Colors.white.withOpacity(0.08)),
+                            ),
+                            elevation: 0,
+                          ),
+                          onPressed: () async {
+                            await engine.updateMyLocation(
+                              zip: _zipController.text.trim(),
+                              city: _cityController.text.trim(),
+                              state: _stateController.text.trim(),
+                              country: user.country,
+                              countryFlag: user.countryFlag,
+                            );
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Location details saved successfully! Scope locked.'), behavior: SnackBarBehavior.floating),
+                              );
+                            }
+                          },
+                          child: const Text('Update Location Scope', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Country Picker section
+                      const Text(
+                        'MY AUDIENCE COUNTRY',
+                        style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Updates your physical country limits (critical for two-phone testing).',
+                        style: TextStyle(color: Colors.white24, fontSize: 10),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: LocaleCountry.pickableCountries.map((c) {
+                          final selected = user.country == c.name;
+                          return FilterChip(
+                            label: Text('${c.flag} ${c.name}'),
+                            selected: selected,
+                            onSelected: (_) => engine.updateMyCountry(c.name, c.flag),
+                            backgroundColor: const Color(0xFF1C1C1E),
+                            selectedColor: AppTheme.primary.withOpacity(0.25),
+                            checkmarkColor: Colors.white,
+                            side: BorderSide(
+                              color: selected ? AppTheme.primary : Colors.white.withOpacity(0.08),
+                              width: 1,
+                            ),
+                            labelStyle: TextStyle(
+                              color: selected ? Colors.white : Colors.white70,
+                              fontSize: 11,
+                              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 4. STATS SUMMARY CARD
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(LucideIcons.checkSquare, size: 24, color: Colors.greenAccent),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'LIFETIME VOTES CAST',
+                              style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1),
+                            ),
                             const SizedBox(height: 4),
                             Text(
                               '${user.totalVotesCast}',
-                              style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900),
+                              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
                             ),
                           ],
                         ),
@@ -817,11 +1847,857 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 24),
+
+                // 5. TEST CONTROLLER ACTIONS
+                const Text(
+                  'DEVELOPER TOOLS',
+                  style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppTheme.primary.withOpacity(0.5)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    icon: const Icon(LucideIcons.plusCircle, size: 16, color: AppTheme.primary),
+                    label: const Text(
+                      'CREATE CONTEST 🏆',
+                      style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const CreateContestScreen()),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 6. UPLOADED POSTS FEED
+                const Text(
+                  'MY POSTS',
+                  style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                ),
+                const SizedBox(height: 12),
+                StreamBuilder<List<PostModel>>(
+                  stream: engine.getMyPosts(),
+                  builder: (context, snapshot) {
+                    final myPosts = snapshot.data ?? [];
+                    if (myPosts.isEmpty) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF141416),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: Colors.white.withOpacity(0.06)),
+                        ),
+                        child: const Column(
+                          children: [
+                            Icon(LucideIcons.image, color: Colors.white24, size: 36),
+                            SizedBox(height: 10),
+                            Text('You haven\'t posted anything yet.', style: TextStyle(color: Colors.white38, fontSize: 12)),
+                          ],
+                        ),
+                      );
+                    }
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: myPosts.length,
+                      itemBuilder: (context, index) {
+                        final post = myPosts[index];
+                        return _buildPostCard(context, post, engine);
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 32),
+
+                // 7. LOG OUT BUTTON
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: Colors.redAccent,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: const BorderSide(color: Colors.redAccent, width: 1.2),
+                      ),
+                    ),
+                    icon: const Icon(LucideIcons.logOut, size: 16),
+                    label: const Text(
+                      'LOG OUT ACCOUNT',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1),
+                    ),
+                    onPressed: () async {
+                      await AuthService.instance.signOut();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           );
         },
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MAP TAB — Simulated Interactive Location Map
+// ---------------------------------------------------------------------------
+class _MapTab extends StatefulWidget {
+  const _MapTab();
+
+  @override
+  State<_MapTab> createState() => _MapTabState();
+}
+
+class _MapTabState extends State<_MapTab> {
+  ContestModel? _selectedContest;
+  
+  // Simulated Location Pins corresponding to seeder contests
+  final List<({double x, double y, String label, String city, String contestId})> _pins = [
+    (x: 0.25, y: 0.35, label: 'Singer Star Talent 🎤', city: 'London', contestId: 'c1'),
+    (x: 0.65, y: 0.45, label: 'Street Dance Showdown ⚡', city: 'Tokyo', contestId: 'c2'),
+    (x: 0.45, y: 0.65, label: 'Comedy Standup Club 🎭', city: 'Tunis', contestId: 'c3'),
+    (x: 0.35, y: 0.50, label: 'Symphonic Rock Violin 🎻', city: 'Paris', contestId: 'c4'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<RankingEngine>(
+      builder: (context, engine, _) {
+        return Scaffold(
+          backgroundColor: const Color(0xFF0A0A0A),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0A0A0A),
+            elevation: 0,
+            title: const Text('CONTEST LOCATION MAP', 
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1)),
+          ),
+          body: Stack(
+            children: [
+              // 1. Map Matrix Grid Canvas
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _MapCanvasPainter(),
+                ),
+              ),
+              
+              // 2. Interactive Pins (scopable by subscription level & country)
+              ..._pins.where((pin) {
+                final user = engine.currentUserProfile;
+                if (user == null) return false;
+                if (user.subscriptionLevel == 'premium') return true;
+                
+                final countryMap = {
+                  'London': 'United Kingdom',
+                  'Tokyo': 'Japan',
+                  'Tunis': 'Tunisia',
+                  'Paris': 'France',
+                };
+                final pinCountry = countryMap[pin.city];
+                return pinCountry != null && pinCountry.toLowerCase() == user.country.toLowerCase();
+              }).map((pin) {
+                final isSelected = _selectedContest?.id == pin.contestId;
+                return Positioned(
+                  left: MediaQuery.of(context).size.width * pin.x,
+                  top: MediaQuery.of(context).size.height * 0.65 * pin.y,
+                  child: GestureDetector(
+                    onTap: () {
+                      final contest = engine.contests.firstWhere(
+                        (c) => c.id == pin.contestId,
+                        orElse: () => engine.contests.first,
+                      );
+                      setState(() => _selectedContest = contest);
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppTheme.primary : const Color(0xFF151515),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: isSelected ? Colors.white : AppTheme.primary, width: 1.5),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppTheme.primary.withValues(alpha: isSelected ? 0.6 : 0.2),
+                                blurRadius: isSelected ? 12 : 6,
+                              )
+                            ],
+                          ),
+                          child: Icon(
+                            LucideIcons.mapPin,
+                            color: isSelected ? Colors.white : AppTheme.primary,
+                            size: isSelected ? 22 : 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.75),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            pin.city,
+                            style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+
+              // 3. Floating Overlay Instructions
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(LucideIcons.info, color: AppTheme.primary, size: 16),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Simulated Dark-Radar Geo Scoping. Tap location pins to open location-aware contests.',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // 4. Contest Detail Bottom Card
+              if (_selectedContest != null)
+                Positioned(
+                  bottom: 16,
+                  left: 16,
+                  right: 16,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF121212),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4), width: 1.2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          blurRadius: 20,
+                        )
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primary,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _selectedContest!.category.toUpperCase(),
+                                style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(LucideIcons.x, color: Colors.white54, size: 18),
+                              onPressed: () => setState(() => _selectedContest = null),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _selectedContest!.title,
+                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _selectedContest!.subtitle,
+                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            const Icon(LucideIcons.gift, color: Colors.amber, size: 14),
+                            const SizedBox(width: 6),
+                            Text('Prize: ${_selectedContest!.prize}', 
+                                style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 16),
+                            const Icon(LucideIcons.users, color: Colors.white54, size: 14),
+                            const SizedBox(width: 6),
+                            Text('${_selectedContest!.participantCount} Joined', 
+                                style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: () {
+                              final contest = _selectedContest!;
+                              setState(() => _selectedContest = null);
+                              engine.loadContestEntries(contest.id);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => ContestDetailScreen(contest: contest)),
+                              );
+                            },
+                            child: const Text(
+                              'OPEN CONTEST ARENA',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 0.5),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MapCanvasPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.05)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    // Draw grid matrix
+    const int lines = 12;
+    for (int i = 0; i <= lines; i++) {
+      final double x = (size.width / lines) * i;
+      final double y = (size.height / lines) * i;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+
+    // Draw dynamic concentric target circular waves
+    final paintWave = Paint()
+      ..color = AppTheme.primary.withValues(alpha: 0.08)
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+    
+    canvas.drawCircle(Offset(size.width * 0.45, size.height * 0.45), size.width * 0.2, paintWave);
+    canvas.drawCircle(Offset(size.width * 0.45, size.height * 0.45), size.width * 0.4, paintWave);
+    canvas.drawCircle(Offset(size.width * 0.45, size.height * 0.45), size.width * 0.6, paintWave);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ---------------------------------------------------------------------------
+// EXPLORE TAB — Live Sliding Feed Sorted by 10-Second Ranking Engine
+// ---------------------------------------------------------------------------
+class _ExploreTab extends StatefulWidget {
+  const _ExploreTab();
+
+  @override
+  State<_ExploreTab> createState() => _ExploreTabState();
+}
+
+class _ExploreTabState extends State<_ExploreTab> {
+  String _selectedTypeFilter = 'All'; // 'All', 'image', 'video', 'text'
+
+  String _formatTimeAgo(DateTime dateTime) {
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inDays >= 7) {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    } else if (difference.inDays >= 1) {
+      return '${difference.inDays}d ago';
+    } else if (difference.inHours >= 1) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inMinutes >= 1) {
+      return '${difference.inMinutes}m ago';
+    } else {
+      return 'Just now';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<RankingEngine>(
+      builder: (context, engine, _) {
+        final viewer = engine.currentUserProfile;
+        if (viewer == null) {
+          return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+        }
+
+        return Scaffold(
+          backgroundColor: const Color(0xFF0A0A0A),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0A0A0A),
+            elevation: 0,
+            title: const Text(
+              'GLOBAL FEED',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 15,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+          body: StreamBuilder<List<PostModel>>(
+            stream: engine.watchAllPosts(),
+            builder: (context, snapshot) {
+              final posts = snapshot.data ?? [];
+
+              // Filter by type if selected
+              final filtered = posts.where((post) {
+                if (_selectedTypeFilter == 'All') return true;
+                return post.type == _selectedTypeFilter;
+              }).toList();
+
+              return Column(
+                children: [
+                  _buildTypeFilters(),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No posts found.',
+                              style: TextStyle(color: Colors.white38, fontSize: 13),
+                            ),
+                          )
+                        : ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            itemCount: filtered.length,
+                            itemBuilder: (ctx, i) {
+                              final post = filtered[i];
+                              return _buildPostCard(ctx, post, engine);
+                            },
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTypeFilters() {
+    final filters = [
+      {'value': 'All', 'label': 'All Feed'},
+      {'value': 'image', 'label': 'Photos'},
+      {'value': 'video', 'label': 'Videos'},
+      {'value': 'text', 'label': 'Text'},
+    ];
+    return Container(
+      height: 48,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: filters.length,
+        itemBuilder: (_, i) {
+          final filter = filters[i];
+          final val = filter['value']!;
+          final label = filter['label']!;
+          final selected = _selectedTypeFilter == val;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(label),
+              selected: selected,
+              onSelected: (_) => setState(() => _selectedTypeFilter = val),
+              selectedColor: AppTheme.primary.withOpacity(0.25),
+              checkmarkColor: Colors.white,
+              backgroundColor: const Color(0xFF1C1C1E),
+              labelStyle: TextStyle(
+                color: selected ? Colors.white : Colors.white60,
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+              side: BorderSide(
+                color: selected ? AppTheme.primary : Colors.white.withOpacity(0.08),
+                width: 1,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPostCard(BuildContext context, PostModel post, RankingEngine engine) {
+    final viewer = engine.currentUserProfile;
+    final isLiked = viewer != null && post.likes.contains(viewer.uid);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PublicProfileScreen(userId: post.userId),
+                      ),
+                    );
+                  },
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundImage: post.userAvatar.isNotEmpty
+                        ? AvatarHelper.getSafeAvatarProvider(post.userAvatar)
+                        : null,
+                    backgroundColor: Colors.grey.shade900,
+                    child: post.userAvatar.isEmpty
+                        ? const Icon(LucideIcons.user, size: 20, color: Colors.white60)
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PublicProfileScreen(userId: post.userId),
+                            ),
+                          );
+                        },
+                        child: Text(
+                          post.userName,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            _formatTimeAgo(post.createdAt),
+                            style: const TextStyle(color: Colors.white38, fontSize: 10),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(LucideIcons.dot, color: Colors.white38, size: 10),
+                          const SizedBox(width: 4),
+                          Icon(
+                            post.visibilityScope == 'global' ? LucideIcons.globe : LucideIcons.mapPin,
+                            size: 10,
+                            color: Colors.white38,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            post.visibilityScope.toUpperCase(),
+                            style: const TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (post.contestId != null && post.contestId!.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.primary.withOpacity(0.25)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(LucideIcons.trophy, color: AppTheme.primary, size: 10),
+                        SizedBox(width: 4),
+                        Text(
+                          'ARENA',
+                          style: TextStyle(color: AppTheme.primary, fontSize: 8, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (post.caption.isNotEmpty && post.type != 'text')
+            Padding(
+              padding: const EdgeInsets.only(left: 14, right: 14, bottom: 10),
+              child: Text(
+                post.caption,
+                style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+              ),
+            ),
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PostDetailScreen(postId: post.id),
+                ),
+              );
+            },
+            child: post.type == 'text'
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [const Color(0xFF1E1E22), const Color(0xFF121214)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      post.contentUrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
+                      textAlign: TextAlign.center,
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  )
+                : post.type == 'image'
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: AspectRatio(
+                          aspectRatio: 16 / 10,
+                          child: AvatarHelper.getSafePostImage(
+                            post.contentUrl,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      )
+                    : Container(
+                        width: double.infinity,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(12),
+                          image: post.contentUrl.isNotEmpty && !post.contentUrl.startsWith('/data/user/')
+                              ? DecorationImage(
+                                  image: AvatarHelper.getSafeAvatarProvider(post.contentUrl),
+                                  fit: BoxFit.cover,
+                                  colorFilter: ColorFilter.mode(
+                                    Colors.black.withOpacity(0.4),
+                                    BlendMode.darken,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        child: const Center(
+                          child: CircleAvatar(
+                            radius: 24,
+                            backgroundColor: Colors.black54,
+                            child: Icon(LucideIcons.play, color: Colors.white, size: 24),
+                          ),
+                        ),
+                      ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => engine.toggleLikePost(post.id),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isLiked ? Icons.favorite : Icons.favorite_border,
+                        color: isLiked ? AppTheme.primary : Colors.white60,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${post.likes.length}',
+                        style: TextStyle(
+                          color: isLiked ? Colors.white : Colors.white60,
+                          fontWeight: isLiked ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 20),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PostDetailScreen(postId: post.id),
+                      ),
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      const Icon(LucideIcons.messageSquare, color: Colors.white60, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${post.commentsCount}',
+                        style: const TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ACTIVITY TAB — Real-Time Event Log Notifications
+// ---------------------------------------------------------------------------
+class _ActivityTab extends StatelessWidget {
+  const _ActivityTab();
+
+  Color _getColorForType(String type) {
+    switch (type) {
+      case 'vote':
+        return AppTheme.primary;
+      case 'join':
+        return Colors.green;
+      case 'live':
+        return Colors.red;
+      default:
+        return Colors.blue;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<RankingEngine>(
+      builder: (context, engine, _) {
+        return Scaffold(
+          backgroundColor: const Color(0xFF0A0A0A),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0A0A0A),
+            elevation: 0,
+            title: const Text('REAL-TIME ACTIVITY LOG', 
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1)),
+          ),
+          body: StreamBuilder<List<NotificationModel>>(
+            stream: engine.watchNotifications(),
+            builder: (context, snapshot) {
+              final notifications = snapshot.data ?? [];
+              if (notifications.isEmpty) {
+                return const Center(
+                  child: Text('No real-time logs reported.', style: TextStyle(color: Colors.white38)),
+                );
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: notifications.length,
+                itemBuilder: (ctx, i) {
+                  final notif = notifications[i];
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF121212),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          backgroundImage: AvatarHelper.getSafeAvatarProvider(notif.senderAvatar),
+                          radius: 18,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    notif.title.toUpperCase(),
+                                    style: TextStyle(
+                                      color: _getColorForType(notif.type),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  const Icon(LucideIcons.activity, color: Colors.white24, size: 10),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                notif.message,
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
