@@ -31,6 +31,38 @@ class PostModel {
     this.commentsCount = 0,
   });
 
+  PostModel copyWith({
+    String? id,
+    String? userId,
+    String? userName,
+    String? userAvatar,
+    String? type,
+    String? contentUrl,
+    String? caption,
+    String? visibilityScope,
+    String? location,
+    DateTime? createdAt,
+    String? contestId,
+    List<String>? likes,
+    int? commentsCount,
+  }) {
+    return PostModel(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      userName: userName ?? this.userName,
+      userAvatar: userAvatar ?? this.userAvatar,
+      type: type ?? this.type,
+      contentUrl: contentUrl ?? this.contentUrl,
+      caption: caption ?? this.caption,
+      visibilityScope: visibilityScope ?? this.visibilityScope,
+      location: location ?? this.location,
+      createdAt: createdAt ?? this.createdAt,
+      contestId: contestId ?? this.contestId,
+      likes: likes ?? this.likes,
+      commentsCount: commentsCount ?? this.commentsCount,
+    );
+  }
+
   factory PostModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     final createdAtData = data['createdAt'];

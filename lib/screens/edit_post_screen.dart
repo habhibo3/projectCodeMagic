@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -298,7 +299,21 @@ class _EditPostScreenState extends State<EditPostScreen> {
                                   ? const Center(
                                       child: Icon(LucideIcons.video, color: AppTheme.primary, size: 48),
                                     )
-                                  : Image.file(_mediaFile!, fit: BoxFit.cover),
+                                  : kIsWeb
+                                      ? Container(
+                                          color: Colors.grey.shade900,
+                                          child: const Center(
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(LucideIcons.image, color: Colors.white30, size: 48),
+                                                SizedBox(height: 8),
+                                                Text('Image selected', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                              ],
+                                            ),
+                                          ),
+                                        )
+                                      : Image.file(_mediaFile!, fit: BoxFit.cover),
                             )
                           : widget.post.contentUrl.isNotEmpty
                               ? ClipRRect(

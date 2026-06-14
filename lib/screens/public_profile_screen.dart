@@ -1,98 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
-import 'dart:io';
 import '../engine/ranking_engine.dart';
 import '../models/post.dart';
 import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import '../widgets/video_player_widget.dart';
 import 'post_detail_screen.dart';
 import 'edit_post_screen.dart';
-
-class VideoPlayerWidget extends StatefulWidget {
-  final String videoUrl;
-  final bool isLocal;
-
-  const VideoPlayerWidget({super.key, required this.videoUrl, required this.isLocal});
-
-  @override
-  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
-}
-
-class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
-  late VideoPlayerController _controller;
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeVideo();
-  }
-
-  Future<void> _initializeVideo() async {
-    try {
-      if (widget.isLocal) {
-        _controller = VideoPlayerController.file(File(widget.videoUrl));
-      } else {
-        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-      }
-      await _controller.initialize();
-      setState(() {
-        _isInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Error initializing video: $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      return Container(
-        height: 240,
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: AppTheme.primary),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (_controller.value.isPlaying) {
-            _controller.pause();
-          } else {
-            _controller.play();
-          }
-        });
-      },
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
-          ),
-          if (!_controller.value.isPlaying)
-            const CircleAvatar(
-              radius: 28,
-              backgroundColor: Colors.black54,
-              child: Icon(LucideIcons.play, color: Colors.white, size: 28),
-            ),
-        ],
-      ),
-    );
-  }
-}
 
 class PublicProfileScreen extends StatefulWidget {
   final String userId;
@@ -104,6 +20,12 @@ class PublicProfileScreen extends StatefulWidget {
 }
 
 class _PublicProfileScreenState extends State<PublicProfileScreen> {
+  @override
+  void dispose() {
+    // This will dispose all VideoPlayerWidgets when navigating away
+    super.dispose();
+  }
+
   String _formatTimeAgo(DateTime dateTime) {
     final difference = DateTime.now().difference(dateTime);
     if (difference.inDays >= 7) {
@@ -120,13 +42,31 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
   }
 
   Widget _buildVideoPlayer(String videoUrl) {
-    if (videoUrl.startsWith('/data/user/')) {
-      // Local file
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: true);
-    } else {
-      // Network URL
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: false);
+    final isLocal = !videoUrl.startsWith('http');
+    return VideoPlayerWidget(videoUrl: videoUrl, isLocal: isLocal);
+  }
+
+  Widget _buildProcessingIndicator(String postUserId) {
+    final isOwner = postUserId == Provider.of<RankingEngine>(context, listen: false).currentUserId;
+    if (!isOwner) {
+      return const SizedBox.shrink(); // Hide from other users
     }
+    return Container(
+      color: Colors.black,
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: AppTheme.primary),
+            SizedBox(height: 12),
+            Text(
+              'Video processing...',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPostCard(BuildContext context, PostModel post, RankingEngine engine) {
@@ -374,6 +314,7 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           else if (post.type == 'video')
             GestureDetector(
               onTap: () {
+                if (post.contentUrl == 'processing') return; // Don't navigate if processing
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -385,15 +326,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 width: double.infinity,
                 height: 240,
                 color: Colors.black,
-                child: post.contentUrl.isNotEmpty
-                    ? _buildVideoPlayer(post.contentUrl)
-                    : const Center(
-                        child: CircleAvatar(
-                          radius: 24,
-                          backgroundColor: Colors.black54,
-                          child: Icon(LucideIcons.play, color: Colors.white, size: 24),
-                        ),
-                      ),
+                child: post.contentUrl == 'processing'
+                    ? _buildProcessingIndicator(post.userId)
+                    : post.contentUrl.isNotEmpty
+                        ? _buildVideoPlayer(post.contentUrl)
+                        : const Center(
+                            child: CircleAvatar(
+                              radius: 24,
+                              backgroundColor: Colors.black54,
+                              child: Icon(LucideIcons.play, color: Colors.white, size: 24),
+                            ),
+                          ),
               ),
             ),
 
@@ -746,7 +689,9 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 StreamBuilder<List<PostModel>>(
                   stream: engine.getUserPosts(widget.userId),
                   builder: (context, postsSnapshot) {
-                    final posts = postsSnapshot.data ?? [];
+                    final posts = (postsSnapshot.data ?? []).where((p) {
+                      return !(p.contentUrl == 'processing' && p.userId != engine.currentUserId);
+                    }).toList();
                     if (posts.isEmpty) {
                       return Container(
                         width: double.infinity,

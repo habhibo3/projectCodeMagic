@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../data/firebase_service.dart';
 import '../data/live_session_service.dart';
@@ -36,6 +37,90 @@ class RankingEngine extends ChangeNotifier {
   final List<VoteActivity> _voteActivity = [];
   UserModel? _currentUserProfile;
 
+  // Maps to track active video uploads for the current user session
+  final Map<String, String> _localVideoPaths = {};
+  final Map<String, double> _uploadProgressMap = {};
+
+  Map<String, String> get localVideoPaths => _localVideoPaths;
+  Map<String, double> get uploadProgressMap => _uploadProgressMap;
+
+  // --- Paginated Feed State ---
+  final List<PostModel> _feedPosts = [];
+  bool _isLoadingFeed = false;
+  bool _hasMoreFeed = true;
+  dynamic _lastFeedDocument;
+
+  List<PostModel> get feedPosts => _feedPosts;
+  bool get isLoadingFeed => _isLoadingFeed;
+  bool get hasMoreFeed => _hasMoreFeed;
+
+  Future<void> fetchNextFeedPage() async {
+    if (_isLoadingFeed || !_hasMoreFeed) return;
+
+    _isLoadingFeed = true;
+    notifyListeners();
+
+    try {
+      const limit = 10;
+      final results = await _firebaseService.getPostsQueryPaginated(
+        limit: limit,
+        startAfter: _lastFeedDocument,
+      );
+
+      if (results.isEmpty) {
+        _hasMoreFeed = false;
+      } else {
+        _lastFeedDocument = results.last;
+        final List<PostModel> newPosts = results.map((item) {
+          if (item is PostModel) {
+            return item;
+          } else {
+            return PostModel.fromFirestore(item as DocumentSnapshot);
+          }
+        }).toList();
+
+        for (final post in newPosts) {
+          if (!_feedPosts.any((p) => p.id == post.id)) {
+            _feedPosts.add(post);
+          }
+        }
+
+        if (results.length < limit) {
+          _hasMoreFeed = false;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching next feed page: $e');
+    } finally {
+      _isLoadingFeed = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshFeed() async {
+    _feedPosts.clear();
+    _hasMoreFeed = true;
+    _lastFeedDocument = null;
+    notifyListeners();
+    await fetchNextFeedPage();
+  }
+
+  void setLocalVideoPath(String postId, String path) {
+    _localVideoPaths[postId] = path;
+    notifyListeners();
+  }
+
+  void setUploadProgress(String postId, double progress) {
+    _uploadProgressMap[postId] = progress;
+    notifyListeners();
+  }
+
+  void clearUploadTask(String postId) {
+    _localVideoPaths.remove(postId);
+    _uploadProgressMap.remove(postId);
+    notifyListeners();
+  }
+
   StreamSubscription? _contestsSub;
   StreamSubscription? _entriesSub;
   StreamSubscription? _userSub;
@@ -51,6 +136,7 @@ class RankingEngine extends ChangeNotifier {
   RankingEngine({required this.currentUserId}) {
     _listenToContests();
     _listenToCurrentUser();
+    fetchNextFeedPage();
   }
 
   bool get isSimulationActive => _isSimulationActive;
@@ -251,8 +337,8 @@ class RankingEngine extends ChangeNotifier {
     }
   }
 
-  Future<String> uploadPostMedia(File file) async {
-    return await _firebaseService.uploadPostMedia(currentUserId, file);
+  Future<String> uploadPostMedia(File file, {void Function(double progress)? onProgress}) async {
+    return await _firebaseService.uploadPostMedia(currentUserId, file, onProgress: onProgress);
   }
 
   Future<void> updateMyDisplayName(String displayName) async {
@@ -449,7 +535,7 @@ class RankingEngine extends ChangeNotifier {
     return success;
   }
 
-  Future<void> createPost({
+  Future<String> createPost({
     required String type,
     required String contentUrl,
     required String caption,
@@ -472,6 +558,13 @@ class RankingEngine extends ChangeNotifier {
     );
 
     await _firebaseService.createPost(post);
+
+    if (!_feedPosts.any((p) => p.id == postId)) {
+      _feedPosts.insert(0, post);
+      notifyListeners();
+    }
+
+    return postId;
   }
 
   Future<void> createPostAndJoinContest({
@@ -500,6 +593,11 @@ class RankingEngine extends ChangeNotifier {
 
     await _firebaseService.createPostAndJoinContest(post, contestId);
 
+    if (!_feedPosts.any((p) => p.id == postId)) {
+      _feedPosts.insert(0, post);
+      notifyListeners();
+    }
+
     // Publish join notification
     final notify = NotificationModel(
       id: '',
@@ -515,6 +613,8 @@ class RankingEngine extends ChangeNotifier {
 
   Future<void> deletePost(String postId) async {
     await _firebaseService.deletePost(postId);
+    _feedPosts.removeWhere((p) => p.id == postId);
+    notifyListeners();
   }
 
   Future<void> updatePost(String postId, {
@@ -531,6 +631,18 @@ class RankingEngine extends ChangeNotifier {
     if (visibilityScope != null) updates['visibilityScope'] = visibilityScope;
     if (location != null) updates['location'] = location;
     await _firebaseService.updatePost(postId, updates);
+
+    final index = _feedPosts.indexWhere((p) => p.id == postId);
+    if (index != -1) {
+      _feedPosts[index] = _feedPosts[index].copyWith(
+        type: type,
+        contentUrl: contentUrl,
+        caption: caption,
+        visibilityScope: visibilityScope,
+        location: location,
+      );
+      notifyListeners();
+    }
   }
 
   Future<void> createContest(ContestModel contest) async {
@@ -550,6 +662,18 @@ class RankingEngine extends ChangeNotifier {
   }
 
   Future<void> toggleLikePost(String postId) async {
+    final index = _feedPosts.indexWhere((p) => p.id == postId);
+    if (index != -1) {
+      final post = _feedPosts[index];
+      final updatedLikes = List<String>.from(post.likes);
+      if (updatedLikes.contains(currentUserId)) {
+        updatedLikes.remove(currentUserId);
+      } else {
+        updatedLikes.add(currentUserId);
+      }
+      _feedPosts[index] = post.copyWith(likes: updatedLikes);
+      notifyListeners();
+    }
     await _firebaseService.toggleLikePost(postId, currentUserId);
   }
 
@@ -568,6 +692,14 @@ class RankingEngine extends ChangeNotifier {
       timestamp: DateTime.now(),
     );
     await _firebaseService.addPostComment(postId, comment);
+
+    final index = _feedPosts.indexWhere((p) => p.id == postId);
+    if (index != -1) {
+      _feedPosts[index] = _feedPosts[index].copyWith(
+        commentsCount: _feedPosts[index].commentsCount + 1,
+      );
+      notifyListeners();
+    }
   }
 
   Stream<PostModel?> getPostStream(String postId) {

@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 /// Authentication service supporting Email & Password auth with Firestore user profiles.
 class AuthService {
@@ -101,6 +102,52 @@ class AuthService {
       return uid;
     } catch (e) {
       debugPrint('AuthService: anonymous sign-in failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Signs in with Google.
+  Future<UserCredential> signInWithGoogle() async {
+    try {
+      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) {
+        throw Exception('Google sign-in was cancelled');
+      }
+
+      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final OAuthCredential credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      final uid = userCredential.user?.uid;
+
+      if (uid != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        if (!userDoc.exists) {
+          await FirebaseFirestore.instance.collection('users').doc(uid).set({
+            'displayName': userCredential.user?.displayName ?? '',
+            'email': userCredential.user?.email ?? '',
+            'photoURL': userCredential.user?.photoURL ?? '',
+            'role': 'contestant',
+            'country': 'Global',
+            'countryFlag': '🌍',
+            'bio': '',
+            'createdAt': FieldValue.serverTimestamp(),
+            'totalVotesCast': 0,
+            'subscriptionLevel': 'free',
+            'zip': '',
+            'city': '',
+            'state': '',
+            'location': '',
+          });
+        }
+      }
+
+      return userCredential;
+    } catch (e) {
+      debugPrint('AuthService signInWithGoogle error: $e');
       rethrow;
     }
   }

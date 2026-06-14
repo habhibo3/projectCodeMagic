@@ -6,6 +6,7 @@ import '../models/comment.dart';
 import '../models/post.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import '../widgets/video_player_widget.dart';
 import 'public_profile_screen.dart';
 
 class PostDetailScreen extends StatefulWidget {
@@ -258,28 +259,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                 ),
                               )
                             else if (post.type == 'video')
-                              Container(
-                                width: double.infinity,
-                                height: 260,
-                                decoration: BoxDecoration(
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  width: double.infinity,
                                   color: Colors.black,
-                                  borderRadius: BorderRadius.circular(12),
-                                  image: post.contentUrl.isNotEmpty && !post.contentUrl.startsWith('/data/user/')
-                                      ? DecorationImage(
-                                          image: AvatarHelper.getSafeAvatarProvider(post.contentUrl),
-                                          fit: BoxFit.cover,
-                                          colorFilter: ColorFilter.mode(
-                                            Colors.black.withOpacity(0.4),
-                                            BlendMode.darken,
-                                          ),
-                                        )
-                                      : null,
-                                ),
-                                child: const Center(
-                                  child: CircleAvatar(
-                                    radius: 28,
-                                    backgroundColor: Colors.black54,
-                                    child: Icon(LucideIcons.play, color: Colors.white, size: 28),
+                                  child: VideoPlayerWidget(
+                                    videoUrl: post.contentUrl,
+                                    isLocal: !post.contentUrl.startsWith('http'),
+                                    autoPlay: true,
                                   ),
                                 ),
                               ),

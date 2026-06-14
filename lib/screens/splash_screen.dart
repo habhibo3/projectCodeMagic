@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:firebase_core/firebase_core.dart';
 import '../theme/app_theme.dart';
 import '../main.dart';
+import '../firebase_options.dart';
+import '../data/firebase_seeder.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -12,11 +15,31 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  bool _isInitialized = false;
+
   @override
   void initState() {
     super.initState();
-    // Navigate to the main auth wrapper after the animation completes
-    Future.delayed(const Duration(milliseconds: 3500), () {
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      await FirebaseSeeder.seedIfEmpty();
+    } catch (e) {
+      // Silently handle Firebase initialization errors
+    }
+
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+      });
+
+      // Navigate after initialization and minimum splash time
+      await Future.delayed(const Duration(milliseconds: 1500));
       if (mounted) {
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
@@ -24,11 +47,11 @@ class _SplashScreenState extends State<SplashScreen> {
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },
-            transitionDuration: const Duration(milliseconds: 800),
+            transitionDuration: const Duration(milliseconds: 300),
           ),
         );
       }
-    });
+    }
   }
 
   @override

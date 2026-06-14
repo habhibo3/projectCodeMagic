@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../data/auth_service.dart';
 import '../data/locale_country.dart';
 import '../engine/ranking_engine.dart';
@@ -13,6 +16,7 @@ import '../models/user.dart';
 import '../models/notification.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import '../widgets/video_player_widget.dart';
 import 'contest_detail_screen.dart';
 import 'create_post_screen.dart';
 import 'create_contest_screen.dart';
@@ -21,99 +25,16 @@ import 'post_detail_screen.dart';
 import 'public_profile_screen.dart';
 import 'feed_screen.dart';
 import 'edit_post_screen.dart';
-import 'package:video_player/video_player.dart';
-import 'dart:io';
-
-class VideoPlayerWidget extends StatefulWidget {
-  final String videoUrl;
-  final bool isLocal;
-
-  const VideoPlayerWidget({super.key, required this.videoUrl, required this.isLocal});
-
-  @override
-  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
-}
-
-class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
-  late VideoPlayerController _controller;
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeVideo();
-  }
-
-  Future<void> _initializeVideo() async {
-    try {
-      if (widget.isLocal) {
-        _controller = VideoPlayerController.file(File(widget.videoUrl));
-      } else {
-        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-      }
-      await _controller.initialize();
-      setState(() {
-        _isInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Error initializing video: $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      return Container(
-        height: 240,
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: AppTheme.primary),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (_controller.value.isPlaying) {
-            _controller.pause();
-          } else {
-            _controller.play();
-          }
-        });
-      },
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
-          ),
-          if (!_controller.value.isPlaying)
-            const CircleAvatar(
-              radius: 28,
-              backgroundColor: Colors.black54,
-              child: Icon(LucideIcons.play, color: Colors.white, size: 28),
-            ),
-        ],
-      ),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------------
 // ROOT SHELL — holds the persistent BottomNavigationBar + nested Navigator
 // ---------------------------------------------------------------------------
 class ContestListScreen extends StatefulWidget {
-  const ContestListScreen({super.key});
+  const ContestListScreen({super.key, this.onWebNavChange, this.webNavNotifier});
 
   static final GlobalKey<NavigatorState> homeNavKey = GlobalKey<NavigatorState>();
+  final Function(int)? onWebNavChange;
+  final ValueNotifier<int?>? webNavNotifier;
 
   @override
   State<ContestListScreen> createState() => _ContestListScreenState();
@@ -129,6 +50,33 @@ class _ContestListScreenState extends State<ContestListScreen> {
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.webNavNotifier?.addListener(_onWebNavChange);
+  }
+
+  @override
+  void dispose() {
+    widget.webNavNotifier?.removeListener(_onWebNavChange);
+    super.dispose();
+  }
+
+  void _onWebNavChange() {
+    final index = widget.webNavNotifier?.value;
+    if (index != null) {
+      navigateToTab(index);
+    }
+  }
+
+  void navigateToTab(int index) {
+    if (index == _bottomNavIndex) {
+      _navKeys[index].currentState?.popUntil((r) => r.isFirst);
+    }
+    setState(() => _bottomNavIndex = index);
+    widget.onWebNavChange?.call(index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -167,7 +115,9 @@ class _ContestListScreenState extends State<ContestListScreen> {
             ),
           ],
         ),
-        bottomNavigationBar: Theme(
+        bottomNavigationBar: kIsWeb
+            ? null
+            : Theme(
           data: ThemeData(
             splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
@@ -191,6 +141,7 @@ class _ContestListScreenState extends State<ContestListScreen> {
                   _navKeys[index].currentState?.popUntil((r) => r.isFirst);
                 }
                 setState(() => _bottomNavIndex = index);
+                widget.onWebNavChange?.call(index);
               },
               items: const [
                 BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
@@ -328,44 +279,11 @@ class _HomeTabState extends State<_HomeTab> {
         foregroundColor: Colors.white,
         elevation: 8,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Icon(LucideIcons.plus, size: 24),
+        child: const Icon(LucideIcons.trophy, size: 24),
         onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: const Color(0xFF141416),
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
-            builder: (context) => Container(
-              padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(LucideIcons.image, color: Colors.white),
-                    title: const Text('Create Post', style: TextStyle(color: Colors.white)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CreatePostScreen()),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(LucideIcons.trophy, color: Colors.white),
-                    title: const Text('Create Contest', style: TextStyle(color: Colors.white)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const CreateContestScreen()),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const CreateContestScreen()),
           );
         },
       ),
@@ -787,11 +705,8 @@ class _UserProfileTabState extends State<_UserProfileTab> {
   }
 
   Widget _buildVideoPlayer(String videoUrl) {
-    if (videoUrl.startsWith('/data/user/')) {
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: true);
-    } else {
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: false);
-    }
+    final isLocal = !videoUrl.startsWith('http');
+    return VideoPlayerWidget(videoUrl: videoUrl, isLocal: isLocal);
   }
 
   Widget _buildPostCard(BuildContext context, PostModel post, RankingEngine engine) {
@@ -1396,9 +1311,14 @@ class _UserProfileTabState extends State<_UserProfileTab> {
 
           final isPremium = user.subscriptionLevel == 'premium';
 
-          return SingleChildScrollView(
+          // Web-specific layout with max width constraint
+          final content = SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-            child: Column(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: kIsWeb ? 1200 : double.infinity,
+              ),
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 1. ELEGANT PROFILE HEADER CARD
@@ -1906,14 +1826,37 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                         ),
                       );
                     }
-                    return ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: myPosts.length,
-                      itemBuilder: (context, index) {
-                        final post = myPosts[index];
-                        return _buildPostCard(context, post, engine);
-                      },
+
+                    // Web: Show all posts with pagination, Mobile: Show all
+                    final postsToShow = kIsWeb ? myPosts : myPosts;
+                    final pageSize = kIsWeb ? 5 : myPosts.length;
+                    final currentPage = 0; // Can be made stateful for full pagination
+
+                    return Column(
+                      children: [
+                        ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: postsToShow.length,
+                          itemBuilder: (context, index) {
+                            final post = postsToShow[index];
+                            return _buildPostCard(context, post, engine);
+                          },
+                        ),
+                        // Web pagination indicator
+                        if (kIsWeb && myPosts.length > pageSize) ...[
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Showing ${myPosts.length} posts',
+                                style: const TextStyle(color: Colors.white38, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     );
                   },
                 ),
@@ -1946,7 +1889,14 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                 const SizedBox(height: 24),
               ],
             ),
+            ),
           );
+
+          // Center content on web
+          if (kIsWeb) {
+            return Center(child: content);
+          }
+          return content;
         },
       ),
     );
@@ -1965,14 +1915,54 @@ class _MapTab extends StatefulWidget {
 
 class _MapTabState extends State<_MapTab> {
   ContestModel? _selectedContest;
-  
-  // Simulated Location Pins corresponding to seeder contests
-  final List<({double x, double y, String label, String city, String contestId})> _pins = [
-    (x: 0.25, y: 0.35, label: 'Singer Star Talent 🎤', city: 'London', contestId: 'c1'),
-    (x: 0.65, y: 0.45, label: 'Street Dance Showdown ⚡', city: 'Tokyo', contestId: 'c2'),
-    (x: 0.45, y: 0.65, label: 'Comedy Standup Club 🎭', city: 'Tunis', contestId: 'c3'),
-    (x: 0.35, y: 0.50, label: 'Symphonic Rock Violin 🎻', city: 'Paris', contestId: 'c4'),
-  ];
+  final MapController _mapController = MapController();
+
+  // Helper method to check if contest is visible to user based on subscription and location
+  bool _isContestVisible(ContestModel contest, UserModel? user) {
+    if (user == null) return true; // Show all if no user (for testing)
+    
+    // Premium users can see all contests
+    if (user.subscriptionLevel == 'premium') return true;
+    
+    // Free users: check visibility scope
+    switch (contest.visibilityScope) {
+      case 'global':
+        return true;
+      case 'country':
+        return contest.country.isEmpty || contest.country.toLowerCase() == user.country.toLowerCase();
+      case 'state':
+        // For simplicity, check country if state data not available
+        return contest.country.isEmpty || contest.country.toLowerCase() == user.country.toLowerCase();
+      case 'city':
+        return contest.city.isEmpty || contest.city.toLowerCase() == user.city.toLowerCase();
+      case 'zip':
+        // For simplicity, check city if zip data not available
+        return contest.city.isEmpty || contest.city.toLowerCase() == user.city.toLowerCase();
+      default:
+        return true;
+    }
+  }
+
+  // Get LatLng for contest, with fallback to default coordinates
+  LatLng _getContestLatLng(ContestModel contest) {
+    if (contest.latitude != null && contest.longitude != null) {
+      return LatLng(contest.latitude!, contest.longitude!);
+    }
+    
+    // Fallback coordinates based on city with slight offset to prevent overlap
+    final cityCoordinates = {
+      'London': LatLng(51.5074, -0.1278),
+      'Tokyo': LatLng(35.6762, 139.6503),
+      'Tunis': LatLng(36.8065, 10.1815),
+      'Paris': LatLng(48.8566, 2.3522),
+      'New York': LatLng(40.7128, -74.0060),
+    };
+    
+    // Add small random offset based on contest ID hash to prevent overlapping markers
+    final baseCoords = cityCoordinates[contest.city] ?? LatLng(34.0522, -118.2437);
+    final offset = contest.id.hashCode % 1000 / 10000; // Small offset between 0 and 0.1
+    return LatLng(baseCoords.latitude + offset, baseCoords.longitude + offset);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1988,80 +1978,80 @@ class _MapTabState extends State<_MapTab> {
           ),
           body: Stack(
             children: [
-              // 1. Map Matrix Grid Canvas
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _MapCanvasPainter(),
+              // 1. Real Interactive Map
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: LatLng(34.0522, -118.2437), // Default center
+                  initialZoom: 2.0,
+                  minZoom: 1.0,
+                  maxZoom: 18.0,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                  ),
                 ),
-              ),
-              
-              // 2. Interactive Pins (scopable by subscription level & country)
-              ..._pins.where((pin) {
-                final user = engine.currentUserProfile;
-                if (user == null) return false;
-                if (user.subscriptionLevel == 'premium') return true;
-                
-                final countryMap = {
-                  'London': 'United Kingdom',
-                  'Tokyo': 'Japan',
-                  'Tunis': 'Tunisia',
-                  'Paris': 'France',
-                };
-                final pinCountry = countryMap[pin.city];
-                return pinCountry != null && pinCountry.toLowerCase() == user.country.toLowerCase();
-              }).map((pin) {
-                final isSelected = _selectedContest?.id == pin.contestId;
-                return Positioned(
-                  left: MediaQuery.of(context).size.width * pin.x,
-                  top: MediaQuery.of(context).size.height * 0.65 * pin.y,
-                  child: GestureDetector(
-                    onTap: () {
-                      final contest = engine.contests.firstWhere(
-                        (c) => c.id == pin.contestId,
-                        orElse: () => engine.contests.first,
-                      );
-                      setState(() => _selectedContest = contest);
-                    },
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 300),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: isSelected ? AppTheme.primary : const Color(0xFF151515),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: isSelected ? Colors.white : AppTheme.primary, width: 1.5),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppTheme.primary.withValues(alpha: isSelected ? 0.6 : 0.2),
-                                blurRadius: isSelected ? 12 : 6,
-                              )
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.contest_live',
+                  ),
+                  // 2. Contest Markers
+                  MarkerLayer(
+                    markers: engine.contests.map((contest) {
+                      final latLng = _getContestLatLng(contest);
+                      final isSelected = _selectedContest?.id == contest.id;
+                      return Marker(
+                        point: latLng,
+                        width: 60,
+                        height: 60,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedContest = contest);
+                            _mapController.move(latLng, 10.0);
+                          },
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? AppTheme.primary : const Color(0xFF151515),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: isSelected ? Colors.white : AppTheme.primary, width: 1.5),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppTheme.primary.withValues(alpha: isSelected ? 0.6 : 0.2),
+                                      blurRadius: isSelected ? 12 : 6,
+                                    )
+                                  ],
+                                ),
+                                child: Icon(
+                                  LucideIcons.mapPin,
+                                  color: isSelected ? Colors.white : AppTheme.primary,
+                                  size: isSelected ? 22 : 16,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  contest.city.isNotEmpty ? contest.city : contest.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold),
+                                ),
+                              ),
                             ],
                           ),
-                          child: Icon(
-                            LucideIcons.mapPin,
-                            color: isSelected ? Colors.white : AppTheme.primary,
-                            size: isSelected ? 22 : 16,
-                          ),
                         ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.75),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            pin.city,
-                            style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    }).toList(),
                   ),
-                );
-              }),
+                ],
+              ),
 
               // 3. Floating Overlay Instructions
               Positioned(
@@ -2075,14 +2065,14 @@ class _MapTabState extends State<_MapTab> {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.white12),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(LucideIcons.info, color: AppTheme.primary, size: 16),
-                      SizedBox(width: 10),
+                      const Icon(LucideIcons.info, color: AppTheme.primary, size: 16),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Simulated Dark-Radar Geo Scoping. Tap location pins to open location-aware contests.',
-                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                          'Contests by location. ${engine.currentUserProfile?.subscriptionLevel == 'premium' ? 'Premium: Global view' : 'Free: Local view'}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ),
                     ],
@@ -2149,12 +2139,16 @@ class _MapTabState extends State<_MapTab> {
                           children: [
                             const Icon(LucideIcons.gift, color: Colors.amber, size: 14),
                             const SizedBox(width: 6),
-                            Text('Prize: ${_selectedContest!.prize}', 
-                                style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
-                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Text('Prize: ${_selectedContest!.prize}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                            const SizedBox(width: 8),
                             const Icon(LucideIcons.users, color: Colors.white54, size: 14),
                             const SizedBox(width: 6),
-                            Text('${_selectedContest!.participantCount} Joined', 
+                            Text('${_selectedContest!.participantCount} Joined',
                                 style: const TextStyle(color: Colors.white70, fontSize: 11)),
                           ],
                         ),
@@ -2226,6 +2220,8 @@ class _MapCanvasPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+// Removed _MapCanvasPainter as we now use flutter_map
+
 // ---------------------------------------------------------------------------
 // EXPLORE TAB — Live Sliding Feed Sorted by 10-Second Ranking Engine
 // ---------------------------------------------------------------------------
@@ -2238,6 +2234,25 @@ class _ExploreTab extends StatefulWidget {
 
 class _ExploreTabState extends State<_ExploreTab> {
   String _selectedTypeFilter = 'All'; // 'All', 'image', 'video', 'text'
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 400) {
+      Provider.of<RankingEngine>(context, listen: false).fetchNextFeedPage();
+    }
+  }
 
   String _formatTimeAgo(DateTime dateTime) {
     final difference = DateTime.now().difference(dateTime);
@@ -2263,6 +2278,14 @@ class _ExploreTabState extends State<_ExploreTab> {
           return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
         }
 
+        final posts = engine.feedPosts;
+
+        // Filter by type if selected
+        final filtered = posts.where((post) {
+          if (_selectedTypeFilter == 'All') return true;
+          return post.type == _selectedTypeFilter;
+        }).toList();
+
         return Scaffold(
           backgroundColor: const Color(0xFF0A0A0A),
           appBar: AppBar(
@@ -2278,40 +2301,49 @@ class _ExploreTabState extends State<_ExploreTab> {
               ),
             ),
           ),
-          body: StreamBuilder<List<PostModel>>(
-            stream: engine.watchAllPosts(),
-            builder: (context, snapshot) {
-              final posts = snapshot.data ?? [];
-
-              // Filter by type if selected
-              final filtered = posts.where((post) {
-                if (_selectedTypeFilter == 'All') return true;
-                return post.type == _selectedTypeFilter;
-              }).toList();
-
-              return Column(
-                children: [
-                  _buildTypeFilters(),
-                  Expanded(
-                    child: filtered.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No posts found.',
-                              style: TextStyle(color: Colors.white38, fontSize: 13),
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            itemCount: filtered.length,
-                            itemBuilder: (ctx, i) {
-                              final post = filtered[i];
-                              return _buildPostCard(ctx, post, engine);
-                            },
-                          ),
-                  ),
-                ],
-              );
-            },
+          body: Column(
+            children: [
+              _buildTypeFilters(),
+              Expanded(
+                child: filtered.isEmpty && engine.isLoadingFeed
+                    ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
+                    : RefreshIndicator(
+                        onRefresh: () => engine.refreshFeed(),
+                        color: AppTheme.primary,
+                        backgroundColor: const Color(0xFF141416),
+                        child: filtered.isEmpty
+                            ? ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
+                                children: [
+                                  SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+                                  const Center(
+                                    child: Text(
+                                      'No posts found.',
+                                      style: TextStyle(color: Colors.white38, fontSize: 13),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                itemCount: filtered.length + (engine.hasMoreFeed ? 1 : 0),
+                                itemBuilder: (ctx, i) {
+                                  if (i == filtered.length) {
+                                    return const Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 16),
+                                      child: Center(
+                                        child: CircularProgressIndicator(color: AppTheme.primary),
+                                      ),
+                                    );
+                                  }
+                                  final post = filtered[i];
+                                  return _buildPostCard(ctx, post, engine);
+                                },
+                              ),
+                      ),
+              ),
+            ],
           ),
         );
       },

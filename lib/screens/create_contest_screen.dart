@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -23,15 +24,19 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
   final _prizeController = TextEditingController();
   final _scheduleController = TextEditingController();
   final _endsInController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _countryController = TextEditingController();
 
   String _selectedCategory = 'Music';
   String _selectedType = 'Public';
+  String _selectedVisibilityScope = 'global';
   File? _coverImage;
   bool _isCreating = false;
   DateTime? _selectedEndDate;
 
   final List<String> _categories = ['Music', 'Dance', 'Comedy', 'Art', 'Sports', 'Fashion', 'Photography', 'Gaming', 'Other'];
   final List<String> _types = ['Public', 'Official'];
+  final List<String> _visibilityScopes = ['global', 'country', 'city', 'zip'];
 
   @override
   void dispose() {
@@ -42,6 +47,8 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
     _prizeController.dispose();
     _scheduleController.dispose();
     _endsInController.dispose();
+    _cityController.dispose();
+    _countryController.dispose();
     super.dispose();
   }
 
@@ -56,6 +63,27 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
   }
 
   Future<void> _createContest() async {
+    final engine = Provider.of<RankingEngine>(context, listen: false);
+    final profile = engine.currentUserProfile;
+
+    // Check if user is premium
+    if (profile?.subscriptionLevel != 'premium') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Only premium users can create contests'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    // Check if user already has an active contest
+    final contests = engine.contests;
+    final userContests = contests.where((c) => c.creatorId == profile?.uid).toList();
+    if (userContests.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You can only create one contest at a time'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a contest title'), backgroundColor: Colors.redAccent),
@@ -63,9 +91,51 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
       return;
     }
 
+    if (_subtitleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a subtitle'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_descriptionController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a description'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_rulesController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter rules'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_prizeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter prize details'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_scheduleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter schedule details'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
     if (_selectedEndDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select an end date'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_coverImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a cover image'), backgroundColor: Colors.redAccent),
       );
       return;
     }
@@ -98,6 +168,10 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
         reviewCount: 0,
         endsIn: _endsInController.text.trim().isEmpty ? '30 days' : _endsInController.text.trim(),
         endDate: _selectedEndDate,
+        creatorId: profile?.uid ?? '',
+        city: _cityController.text.trim().isEmpty ? (profile?.city ?? 'Tunis') : _cityController.text.trim(),
+        country: _countryController.text.trim().isEmpty ? (profile?.country ?? 'Tunisia') : _countryController.text.trim(),
+        visibilityScope: _selectedVisibilityScope,
       );
 
       await engine.createContest(contest);
@@ -137,27 +211,6 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
           'CREATE CONTEST',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 1.5),
         ),
-        actions: [
-          if (_isCreating)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
-                ),
-              ),
-            )
-          else
-            TextButton(
-              onPressed: _createContest,
-              child: const Text(
-                'CREATE',
-                style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
-              ),
-            ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -183,7 +236,21 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                 child: _coverImage != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.file(_coverImage!, fit: BoxFit.cover),
+                        child: kIsWeb
+                            ? Container(
+                                color: Colors.grey.shade900,
+                                child: const Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(LucideIcons.image, color: Colors.white30, size: 48),
+                                      SizedBox(height: 8),
+                                      Text('Cover image selected', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : Image.file(_coverImage!, fit: BoxFit.cover),
                       )
                     : const Center(
                         child: Column(
@@ -379,6 +446,84 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+
+            // Location Section
+            const Text(
+              'LOCATION',
+              style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _cityController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'City',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      filled: true,
+                      fillColor: const Color(0xFF1E1E1E),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Colors.white12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _countryController,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'Country',
+                      hintStyle: const TextStyle(color: Colors.white30),
+                      filled: true,
+                      fillColor: const Color(0xFF1E1E1E),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Colors.white12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Visibility Scope
+            const Text(
+              'VISIBILITY SCOPE',
+              style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _visibilityScopes.map((scope) {
+                final isSelected = _selectedVisibilityScope == scope;
+                return GestureDetector(
+                  onTap: () => setState(() => _selectedVisibilityScope = scope),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isSelected ? AppTheme.primary : const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(100),
+                    ),
+                    child: Text(
+                      scope.toUpperCase(),
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.white54,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
             const SizedBox(height: 20),
 
             // Category
@@ -448,6 +593,32 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
               }).toList(),
             ),
             const SizedBox(height: 32),
+
+            // Create Button
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: ElevatedButton(
+                onPressed: _isCreating ? null : _createContest,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: _isCreating
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text(
+                        'CREATE CONTEST',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 20),
           ],
         ),
       ),

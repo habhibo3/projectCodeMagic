@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
@@ -15,6 +16,8 @@ import '../data/live_session_service.dart';
 import '../engine/ranking_engine.dart';
 import '../widgets/live_broadcast_widgets.dart';
 import 'package:audioplayers/audioplayers.dart';
+import '../services/agora_web_service.dart';
+import '../widgets/agora_web_video_player.dart';
 
 const String appId = "cc891f53a26c43eab01dd4e8009ba100";
 const String token = "";
@@ -61,6 +64,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   int? _previousTotalVotes;
   final List<_VoteParticle> _particles = [];
 
+  // Web-specific Agora state
+  bool _webAgoraInitialized = false;
+  int? _webUid;
+
   final _liveSessionService = LiveSessionService();
   final TextEditingController _liveCommentController = TextEditingController();
 
@@ -105,12 +112,14 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       _isCoHostConnected = true;
     }
 
-    // Force Landscape Orientation
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Force Landscape Orientation (only on mobile)
+    if (!kIsWeb) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
 
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
     _pulseController = AnimationController(
@@ -248,6 +257,50 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
     // ── STEP 2: Create fresh engine ──
     debugPrint('[LiveStream] initAgora — creating fresh engine...');
+    
+    // Web-specific initialization using Agora web SDK
+    if (kIsWeb) {
+      debugPrint('[LiveStream] initAgora — using web SDK');
+      final initialized = await AgoraWebService.initializeAgora(appId);
+      if (!initialized) {
+        debugPrint('[LiveStream] initAgora — web SDK initialization failed');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to initialize Agora web SDK. Please refresh the page.'),
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+      
+      final result = await AgoraWebService.joinChannel(
+        appId: appId,
+        channel: _channelId,
+        userId: widget.isHost ? kHostAgoraUid : (widget.isCoHost ? kCoHostAgoraUid : 0),
+        token: token,
+      );
+      
+      if (result['success'] == true) {
+        debugPrint('[LiveStream] initAgora — web channel joined successfully');
+        _webUid = result['uid'] as int?;
+        setState(() => _webAgoraInitialized = true);
+      } else {
+        debugPrint('[LiveStream] initAgora — web channel join failed: ${result['error']}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to join channel: ${result['error']}'),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+      return;
+    }
+    
+    // Mobile initialization using Agora Flutter SDK
     _engine = createAgoraRtcEngine();
     await _engine.initialize(const RtcEngineContext(
       appId: appId,
@@ -375,8 +428,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     debugPrint('[LiveStream] dispose — role=${widget.isHost ? "HOST" : widget.isCoHost ? "COHOST" : "VIEWER"}, activeScreens=$_activeScreenCount');
 
     _sessionSub?.cancel();
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    
+    // Web cleanup
+    if (kIsWeb && _webAgoraInitialized) {
+      AgoraWebService.leaveChannel();
+    }
+    
+    // Mobile orientation cleanup
+    if (!kIsWeb) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
 
     // If Host is leaving, reset the Firestore session to 'idle'
     // so the co-host's listener sees it and gets kicked to home.
@@ -397,10 +459,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       }
     }
 
-    // ── Agora engine cleanup ──
+    // ── Agora engine cleanup (mobile only) ──
     // Only touch the engine if NO other LiveStreamScreen is about to use it.
     // If _activeScreenCount > 0, a new screen's initAgora() will handle cleanup.
-    if (_activeScreenCount == 0 && _engineInitialized) {
+    if (_activeScreenCount == 0 && _engineInitialized && !kIsWeb) {
       debugPrint('[LiveStream] dispose — Last screen, cleaning up Agora engine');
       try {
         _engine.leaveChannel();
@@ -427,15 +489,27 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   void _toggleMic() async {
     setState(() => _isMicOn = !_isMicOn);
-    await _engine.muteLocalAudioStream(!_isMicOn);
+    if (kIsWeb) {
+      AgoraWebService.toggleMuteAudio(!_isMicOn);
+    } else {
+      await _engine.muteLocalAudioStream(!_isMicOn);
+    }
   }
 
   void _toggleCamera() async {
     setState(() => _isCameraOn = !_isCameraOn);
-    await _engine.muteLocalVideoStream(!_isCameraOn);
+    if (kIsWeb) {
+      AgoraWebService.toggleMuteVideo(!_isCameraOn);
+    } else {
+      await _engine.muteLocalVideoStream(!_isCameraOn);
+    }
   }
 
   void _switchCamera() async {
+    if (kIsWeb) {
+      debugPrint('Camera switching not supported on web.');
+      return;
+    }
     setState(() => _isFrontCamera = !_isFrontCamera);
     await _engine.switchCamera();
   }
@@ -921,12 +995,90 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Widget _buildCameraFeed({required bool isHost, ContestEntry? entry}) {
-    if (!_engineInitialized) {
-      return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-    }
     final name = entry?.userName ?? (isHost ? 'Host' : 'Co-Host');
     final subtitle = isHost ? 'Organizer' : 'Guest';
     final avatar = entry?.userAvatar;
+
+    // Web-specific video player
+    if (kIsWeb) {
+      // Co-host device: local feed on co-host slot, remote host on host slot
+      if (widget.isCoHost) {
+        if (isHost) {
+          // Co-host sees the host's remote feed in the host panel
+          if (!_webAgoraInitialized) {
+            return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+          }
+          return AgoraWebVideoPlayer(
+            key: ValueKey('cohost_host_feed_${_channelId}_$kHostAgoraUid'),
+            videoId: 'remote-video-$kHostAgoraUid',
+          );
+        } else {
+          // Co-host sees their own local feed in the co-host panel
+          if (!_isCameraOn) {
+            return _buildCameraOffFallback(name: name, subtitle: 'Co-Host', avatar: avatar);
+          }
+          if (!_webAgoraInitialized) {
+            return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+          }
+          return AgoraWebVideoPlayer(
+            key: ValueKey('cohost_local_feed_$_channelId'),
+            videoId: 'local-video',
+          );
+        }
+      }
+
+      // Host device
+      if (widget.isHost) {
+        if (isHost) {
+          if (!_isCameraOn) {
+            return _buildCameraOffFallback(name: name, subtitle: subtitle, avatar: avatar);
+          }
+          if (!_webAgoraInitialized) {
+            return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+          }
+          return AgoraWebVideoPlayer(
+            key: ValueKey('host_local_feed_$_channelId'),
+            videoId: 'local-video',
+          );
+        }
+        if (!_isCoHostConnected) {
+          return _buildNoCoHostFallback(waiting: _coHostEntry != null);
+        }
+        if (!_webAgoraInitialized) {
+          return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+        }
+        return AgoraWebVideoPlayer(
+          key: ValueKey('host_cohost_feed_${_channelId}_$kCoHostAgoraUid'),
+          videoId: 'remote-video-$kCoHostAgoraUid',
+        );
+      }
+
+      // Audience / viewer
+      if (isHost) {
+        if (!_webAgoraInitialized) {
+          return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+        }
+        return AgoraWebVideoPlayer(
+          key: ValueKey('audience_host_feed_${_channelId}_$kHostAgoraUid'),
+          videoId: 'remote-video-$kHostAgoraUid',
+        );
+      }
+      if (!_isCoHostConnected) {
+        return _buildNoCoHostFallback(waiting: false);
+      }
+      if (!_webAgoraInitialized) {
+        return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+      }
+      return AgoraWebVideoPlayer(
+        key: ValueKey('audience_cohost_feed_${_channelId}_$kCoHostAgoraUid'),
+        videoId: 'remote-video-$kCoHostAgoraUid',
+      );
+    }
+
+    // Mobile video player
+    if (!_engineInitialized) {
+      return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+    }
 
     // Co-host device: local feed on co-host slot, remote host on host slot
     if (widget.isCoHost) {

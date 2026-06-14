@@ -8,6 +8,7 @@ import '../screens/entry_post_screen.dart';
 import '../screens/create_post_screen.dart';
 import '../screens/live_stream_screen.dart';
 import '../theme/app_theme.dart';
+import '../widgets/video_player_widget.dart';
 
 class ContestDetailScreen extends StatefulWidget {
   final ContestModel contest;
@@ -314,29 +315,21 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
               borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
               child: Stack(
                 children: [
-                  Image.network(
-                    entry.contentUrl,
-                    height: 140,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(height: 140, color: Colors.grey.shade900),
-                  ),
-                  Container(
-                    height: 140,
-                    color: Colors.black.withValues(alpha: 0.3),
-                  ),
-                  Positioned.fill(
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(LucideIcons.play, color: Colors.white, size: 24),
-                      ),
+                  if (entry.type == 'video')
+                    _buildVideoPlayer(entry.contentUrl)
+                  else
+                    Image.network(
+                      entry.contentUrl,
+                      height: 140,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(height: 140, color: Colors.grey.shade900),
                     ),
-                  ),
+                  if (entry.type == 'video')
+                    Container(
+                      height: 140,
+                      color: Colors.black.withValues(alpha: 0.3),
+                    ),
                   Positioned(
                     top: 10,
                     left: 10,
@@ -379,6 +372,14 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildVideoPlayer(String videoUrl) {
+    if (videoUrl == 'processing') {
+      return const SizedBox.shrink(); // Hide processing videos
+    }
+    final isLocal = !videoUrl.startsWith('http');
+    return VideoPlayerWidget(videoUrl: videoUrl, isLocal: isLocal, autoPlay: false);
   }
 
   Widget _buildDetailsTab() {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
@@ -17,16 +18,15 @@ import 'models/entry.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    await FirebaseSeeder.seedIfEmpty();
-  } catch (e) {
-    debugPrint('Firebase init error: $e');
+  // Only lock orientation on mobile
+  if (!kIsWeb) {
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   }
+
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   runApp(const FeastVoteApp());
 }
@@ -43,7 +43,7 @@ class FeastVoteApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       navigatorKey: navigatorKey,
-      home: const SplashScreen(),
+      home: const AuthWrapper(),
     );
   }
 }
@@ -74,7 +74,9 @@ class AuthWrapper extends StatelessWidget {
           providers: [
             ChangeNotifierProvider(create: (_) => RankingEngine(currentUserId: user.uid)),
           ],
-          child: _GlobalInviteWrapper(child: const ContestListScreen()),
+          child: kIsWeb
+              ? _WebLayoutWrapper(child: const ContestListScreen())
+              : _GlobalInviteWrapper(child: const ContestListScreen()),
         );
       },
     );
@@ -98,6 +100,237 @@ class _GlobalInviteWrapper extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+// Web-specific layout wrapper for desktop experience
+class _WebLayoutWrapper extends StatefulWidget {
+  final Widget child;
+
+  const _WebLayoutWrapper({required this.child});
+
+  @override
+  State<_WebLayoutWrapper> createState() => _WebLayoutWrapperState();
+}
+
+class _WebLayoutWrapperState extends State<_WebLayoutWrapper> {
+  int _selectedIndex = 0;
+  final ValueNotifier<int?> _navChangeNotifier = ValueNotifier<int?>(null);
+
+  @override
+  void dispose() {
+    _navChangeNotifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF09090B),
+      body: Row(
+        children: [
+          // Sidebar for web
+          Container(
+            width: 280,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0A0A0C),
+              border: Border(right: BorderSide(color: Colors.white.withOpacity(0.08))),
+            ),
+            child: Column(
+              children: [
+                const SizedBox(height: 40),
+                // Logo
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: [AppTheme.primary, Colors.purpleAccent]),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(LucideIcons.trophy, color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'FeastVote',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 40),
+                // Navigation items
+                _WebNavItem(
+                  icon: LucideIcons.home,
+                  label: 'Home',
+                  onTap: () => _navigateTo(0),
+                  isActive: _selectedIndex == 0,
+                ),
+                _WebNavItem(
+                  icon: LucideIcons.map,
+                  label: 'Map',
+                  onTap: () => _navigateTo(1),
+                  isActive: _selectedIndex == 1,
+                ),
+                _WebNavItem(
+                  icon: LucideIcons.flame,
+                  label: 'Explore Feed',
+                  onTap: () => _navigateTo(2),
+                  isActive: _selectedIndex == 2,
+                ),
+                _WebNavItem(
+                  icon: LucideIcons.bell,
+                  label: 'Activity',
+                  onTap: () => _navigateTo(3),
+                  isActive: _selectedIndex == 3,
+                ),
+                _WebNavItem(
+                  icon: LucideIcons.user,
+                  label: 'Profile',
+                  onTap: () => _navigateTo(4),
+                  isActive: _selectedIndex == 4,
+                ),
+                const Spacer(),
+                // User section
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      InkWell(
+                        onTap: () => _navigateTo(4),
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF141416),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white.withOpacity(0.08)),
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 20,
+                                backgroundColor: AppTheme.primary.withOpacity(0.2),
+                                child: const Icon(LucideIcons.user, color: Colors.white, size: 20),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'My Account',
+                                  style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () async {
+                          await FirebaseAuth.instance.signOut();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(LucideIcons.logOut, color: Colors.red, size: 16),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Logout',
+                                style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+          // Main content area
+          Expanded(
+            child: _GlobalInviteWrapper(
+              child: ContestListScreen(
+                onWebNavChange: (index) {
+                  setState(() {
+                    _selectedIndex = index;
+                  });
+                },
+                webNavNotifier: _navChangeNotifier,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _navigateTo(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+    _navChangeNotifier.value = index;
+  }
+}
+
+class _WebNavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool isActive;
+
+  const _WebNavItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isActive ? AppTheme.primary.withOpacity(0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: isActive ? AppTheme.primary : Colors.white54,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? Colors.white : Colors.white54,
+                fontSize: 14,
+                fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

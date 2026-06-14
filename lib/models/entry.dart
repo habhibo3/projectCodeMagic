@@ -99,6 +99,13 @@ class ContestModel {
   final int reviewCount;
   final String endsIn;
   final DateTime? endDate;
+  final String creatorId;
+  // Location fields for map system
+  final String city;
+  final String country;
+  final double? latitude;
+  final double? longitude;
+  final String visibilityScope; // 'zip', 'city', 'state', 'country', 'global'
 
   const ContestModel({
     required this.id,
@@ -117,6 +124,12 @@ class ContestModel {
     required this.reviewCount,
     required this.endsIn,
     this.endDate,
+    this.creatorId = '',
+    this.city = '',
+    this.country = '',
+    this.latitude,
+    this.longitude,
+    this.visibilityScope = 'global',
   });
 
   Map<String, dynamic> toMap() {
@@ -137,6 +150,12 @@ class ContestModel {
       'reviewCount': reviewCount,
       'endsIn': endsIn,
       'endDate': endDate?.toIso8601String(),
+      'creatorId': creatorId,
+      'city': city,
+      'country': country,
+      'latitude': latitude,
+      'longitude': longitude,
+      'visibilityScope': visibilityScope,
     };
   }
 
@@ -158,6 +177,12 @@ class ContestModel {
       reviewCount: map['reviewCount'] ?? 0,
       endsIn: map['endsIn'] ?? '30 days',
       endDate: map['endDate'] != null ? DateTime.parse(map['endDate']) : null,
+      creatorId: map['creatorId'] ?? '',
+      city: map['city'] ?? '',
+      country: map['country'] ?? '',
+      latitude: map['latitude']?.toDouble(),
+      longitude: map['longitude']?.toDouble(),
+      visibilityScope: map['visibilityScope'] ?? 'global',
     );
   }
 

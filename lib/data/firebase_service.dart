@@ -61,6 +61,13 @@ class FirebaseService {
           rating: (data['rating'] ?? 0.0).toDouble(),
           reviewCount: data['reviewCount'] ?? 0,
           endsIn: data['endsIn'] ?? '',
+          endDate: data['endDate'] != null ? DateTime.parse(data['endDate']) : null,
+          creatorId: data['creatorId'] ?? '',
+          city: data['city'] ?? '',
+          country: data['country'] ?? '',
+          latitude: data['latitude']?.toDouble(),
+          longitude: data['longitude']?.toDouble(),
+          visibilityScope: data['visibilityScope'] ?? 'global',
         );
       }).toList();
     });
@@ -159,6 +166,14 @@ class FirebaseService {
         final contestSnap = await transaction.get(contestRef);
 
         if (!entrySnap.exists) return false;
+
+        // Prevent contest creator from voting on their own contest
+        if (contestSnap.exists) {
+          final creatorId = contestSnap.data()?['creatorId'] as String?;
+          if (creatorId == voterId) {
+            return false; // Creator cannot vote on their own contest
+          }
+        }
 
         final currentTotal = entrySnap.data()?['totalVotes'] ?? 0;
         final currentWindow = entrySnap.data()?['windowVotes'] ?? 0;
@@ -408,22 +423,50 @@ class FirebaseService {
     }
   }
 
-  Future<String> uploadPostMedia(String userId, File file) async {
-    if (!_isInitialized || _db == null) return file.path;
+  Future<String> uploadPostMedia(
+    String userId, 
+    File file, {
+    void Function(double progress)? onProgress,
+  }) async {
+    if (!_isInitialized || _db == null) {
+      if (onProgress != null) {
+        for (int i = 0; i <= 10; i++) {
+          await Future.delayed(const Duration(milliseconds: 150));
+          onProgress(i / 10.0);
+        }
+      }
+      return file.path;
+    }
     try {
-      final fileName = 'post_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final isVideo = file.path.endsWith('.mp4') || file.path.endsWith('.mov') || file.path.endsWith('.avi');
+      final extension = isVideo ? 'mp4' : 'jpg';
+      final fileName = 'post_${DateTime.now().millisecondsSinceEpoch}.$extension';
       final ref = firebase_storage.FirebaseStorage.instance
           .ref()
           .child('users')
           .child(userId)
           .child('posts')
           .child(fileName);
-      await ref.putFile(file);
+      
+      final uploadTask = ref.putFile(file);
+      
+      if (onProgress != null) {
+        uploadTask.snapshotEvents.listen((event) {
+          if (event.totalBytes > 0) {
+            final progress = event.bytesTransferred / event.totalBytes;
+            onProgress(progress);
+          }
+        });
+      }
+      
+      await uploadTask;
       return await ref.getDownloadURL();
     } catch (e) {
       debugPrint('Failed to upload post media to Firebase Storage: $e');
       debugPrint('Falling back to local file path');
-      // Fallback: use local file path if Firebase Storage fails
+      if (onProgress != null) {
+        onProgress(1.0);
+      }
       return file.path;
     }
   }
@@ -909,6 +952,14 @@ class FirebaseService {
           
           final contestSnap = await transaction.get(contestRef);
           final userSnap = await transaction.get(userRef);
+          
+          // Prevent contest creator from joining their own contest
+          if (contestSnap.exists) {
+            final creatorId = contestSnap.data()?['creatorId'] as String?;
+            if (creatorId == post.userId) {
+              return; // Creator cannot join their own contest
+            }
+          }
           
           final userFlag = userSnap.exists ? (userSnap.data()?['countryFlag'] ?? '🌍') : '🌍';
           final userZip = userSnap.exists ? (userSnap.data()?['zip'] ?? '75001') : '75001';
@@ -1427,5 +1478,69 @@ class FirebaseService {
         .map((snapshot) {
       return snapshot.docs.map((doc) => PostModel.fromFirestore(doc)).toList();
     });
+  }
+
+  Future<List<dynamic>> getPostsQueryPaginated({
+    required int limit,
+    dynamic startAfter,
+  }) async {
+    if (!_isInitialized || _db == null) {
+      if (_mockPosts.isEmpty) {
+        _mockPosts.addAll([
+          PostModel(
+            id: 'mock_p1',
+            userId: 'u1',
+            userName: 'Sophie France',
+            userAvatar: 'https://i.pravatar.cc/150?u=4',
+            type: 'image',
+            contentUrl: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836',
+            caption: 'Fresh and delicious meal prepared today!',
+            visibilityScope: 'global',
+            location: 'Paris, France',
+            createdAt: DateTime.now().subtract(const Duration(hours: 3)),
+            likes: ['u2', 'current_user'],
+            commentsCount: 2,
+          ),
+          PostModel(
+            id: 'mock_p2',
+            userId: 'u2',
+            userName: 'Wei China',
+            userAvatar: 'https://i.pravatar.cc/150?u=5',
+            type: 'text',
+            contentUrl: '',
+            caption: 'Excited to participate in the upcoming street food challenge! Who is with me?',
+            visibilityScope: 'global',
+            location: 'Beijing, China',
+            createdAt: DateTime.now().subtract(const Duration(hours: 6)),
+            likes: ['u1'],
+            commentsCount: 1,
+          ),
+        ]);
+      }
+      final sorted = List<PostModel>.from(_mockPosts);
+      sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      int startIndex = 0;
+      if (startAfter != null && startAfter is PostModel) {
+        final index = sorted.indexWhere((p) => p.id == startAfter.id);
+        if (index != -1) {
+          startIndex = index + 1;
+        }
+      }
+
+      if (startIndex >= sorted.length) {
+        return [];
+      }
+
+      final endIndex = (startIndex + limit).clamp(0, sorted.length);
+      return sorted.sublist(startIndex, endIndex);
+    }
+
+    Query query = _db!.collection('posts').orderBy('createdAt', descending: true).limit(limit);
+    if (startAfter != null && startAfter is DocumentSnapshot) {
+      query = query.startAfterDocument(startAfter);
+    }
+    final snap = await query.get();
+    return snap.docs;
   }
 }

@@ -88,6 +88,11 @@ class MockData {
         rating: 4.7,
         reviewCount: 239,
         endsIn: '7 days',
+        city: 'London',
+        country: 'United Kingdom',
+        latitude: 51.5074,
+        longitude: -0.1278,
+        visibilityScope: 'global',
       ),
       ContestModel(
         id: 'c2',
@@ -109,6 +114,11 @@ class MockData {
         rating: 4.5,
         reviewCount: 110,
         endsIn: '12 days',
+        city: 'Tokyo',
+        country: 'Japan',
+        latitude: 35.6762,
+        longitude: 139.6503,
+        visibilityScope: 'global',
       ),
       ContestModel(
         id: 'c3',
@@ -130,6 +140,11 @@ class MockData {
         rating: 4.8,
         reviewCount: 88,
         endsIn: '15 days',
+        city: 'Tunis',
+        country: 'Tunisia',
+        latitude: 36.8065,
+        longitude: 10.1815,
+        visibilityScope: 'country',
       ),
     ];
   }

@@ -1,98 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
-import 'dart:io';
 import '../engine/ranking_engine.dart';
 import '../models/post.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import '../widgets/video_player_widget.dart';
+import '../widgets/video_manager.dart';
 import 'post_detail_screen.dart';
 import 'public_profile_screen.dart';
 import 'edit_post_screen.dart';
-
-class VideoPlayerWidget extends StatefulWidget {
-  final String videoUrl;
-  final bool isLocal;
-
-  const VideoPlayerWidget({super.key, required this.videoUrl, required this.isLocal});
-
-  @override
-  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
-}
-
-class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
-  late VideoPlayerController _controller;
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeVideo();
-  }
-
-  Future<void> _initializeVideo() async {
-    try {
-      if (widget.isLocal) {
-        _controller = VideoPlayerController.file(File(widget.videoUrl));
-      } else {
-        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
-      }
-      await _controller.initialize();
-      setState(() {
-        _isInitialized = true;
-      });
-    } catch (e) {
-      debugPrint('Error initializing video: $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      return Container(
-        height: 240,
-        color: Colors.black,
-        child: const Center(
-          child: CircularProgressIndicator(color: AppTheme.primary),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (_controller.value.isPlaying) {
-            _controller.pause();
-          } else {
-            _controller.play();
-          }
-        });
-      },
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
-          ),
-          if (!_controller.value.isPlaying)
-            const CircleAvatar(
-              radius: 28,
-              backgroundColor: Colors.black54,
-              child: Icon(LucideIcons.play, color: Colors.white, size: 28),
-            ),
-        ],
-      ),
-    );
-  }
-}
+import 'create_post_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key});
@@ -102,6 +20,26 @@ class FeedScreen extends StatefulWidget {
 }
 
 class _FeedScreenState extends State<FeedScreen> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 400) {
+      Provider.of<RankingEngine>(context, listen: false).fetchNextFeedPage();
+    }
+  }
+
   String _formatTimeAgo(DateTime dateTime) {
     final difference = DateTime.now().difference(dateTime);
     if (difference.inDays >= 7) {
@@ -118,19 +56,88 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 
   Widget _buildVideoPlayer(String videoUrl) {
-    if (videoUrl.startsWith('/data/user/')) {
-      // Local file
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: true);
-    } else {
-      // Network URL
-      return VideoPlayerWidget(videoUrl: videoUrl, isLocal: false);
+    final isLocal = !videoUrl.startsWith('http');
+    return VideoPlayerWidget(videoUrl: videoUrl, isLocal: isLocal);
+  }
+
+  Widget _buildProcessingIndicator(String postUserId) {
+    final isOwner = postUserId == Provider.of<RankingEngine>(context, listen: false).currentUserId;
+    if (!isOwner) {
+      return const SizedBox.shrink(); // Hide from other users
     }
+    return Container(
+      color: Colors.black,
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: AppTheme.primary),
+            SizedBox(height: 12),
+            Text(
+              'Video processing...',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUploadOverlay(double progress) {
+    return Container(
+      color: Colors.black.withOpacity(0.4),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.7),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: CircularProgressIndicator(
+                      value: progress,
+                      strokeWidth: 4,
+                      color: AppTheme.primary,
+                      backgroundColor: Colors.white10,
+                    ),
+                  ),
+                  Text(
+                    '${(progress * 100).toInt()}%',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Uploading video...',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final engine = Provider.of<RankingEngine>(context, listen: false);
-
     return Scaffold(
       backgroundColor: const Color(0xFF09090B),
       appBar: AppBar(
@@ -146,36 +153,87 @@ class _FeedScreenState extends State<FeedScreen> {
           ),
         ),
       ),
-      body: StreamBuilder<List<PostModel>>(
-        stream: engine.watchAllPosts(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+      body: Consumer<RankingEngine>(
+        builder: (context, rankingEngine, _) {
+          final posts = rankingEngine.feedPosts.where((p) {
+            return !(p.contentUrl == 'processing' && p.userId != rankingEngine.currentUserId);
+          }).toList();
+
+          if (posts.isEmpty && rankingEngine.isLoadingFeed) {
             return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
           }
-          final posts = snapshot.data ?? [];
+
+          // Pre-cache top 5 video posts in background to speed up loading
+          int preCacheCount = 0;
+          for (final post in posts) {
+            if (post.type == 'video' && post.contentUrl.isNotEmpty && post.contentUrl != 'processing') {
+              VideoManager().preCacheVideo(post.contentUrl);
+              preCacheCount++;
+              if (preCacheCount >= 5) break;
+            }
+          }
+
           if (posts.isEmpty) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+            return RefreshIndicator(
+              onRefresh: () => rankingEngine.refreshFeed(),
+              color: AppTheme.primary,
+              backgroundColor: const Color(0xFF141416),
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 children: [
-                  Icon(LucideIcons.newspaper, color: Colors.white24, size: 48),
-                  SizedBox(height: 12),
-                  Text(
-                    'No posts yet. Be the first to share!',
-                    style: TextStyle(color: Colors.white38, fontSize: 14),
+                  SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+                  const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(LucideIcons.newspaper, color: Colors.white24, size: 48),
+                        SizedBox(height: 12),
+                        Text(
+                          'No posts yet. Be the first to share!',
+                          style: TextStyle(color: Colors.white38, fontSize: 14),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             );
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: posts.length,
-            itemBuilder: (context, index) {
-              final post = posts[index];
-              return _buildPostCard(context, post, engine);
-            },
+          return RefreshIndicator(
+            onRefresh: () => rankingEngine.refreshFeed(),
+            color: AppTheme.primary,
+            backgroundColor: const Color(0xFF141416),
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: posts.length + (rankingEngine.hasMoreFeed ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == posts.length) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: CircularProgressIndicator(color: AppTheme.primary),
+                    ),
+                  );
+                }
+                final post = posts[index];
+                return _buildPostCard(context, post, rankingEngine);
+              },
+            ),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: AppTheme.primary,
+        foregroundColor: Colors.white,
+        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Icon(LucideIcons.plus, size: 24),
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const CreatePostScreen()),
           );
         },
       ),
@@ -425,29 +483,48 @@ class _FeedScreenState extends State<FeedScreen> {
               ),
             )
           else if (post.type == 'video')
-            GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PostDetailScreen(postId: post.id),
+            Consumer<RankingEngine>(
+              builder: (context, currentEngine, _) {
+                final localPath = currentEngine.localVideoPaths[post.id];
+                final progress = currentEngine.uploadProgressMap[post.id] ?? 0.0;
+                final isProcessing = post.contentUrl == 'processing';
+
+                return GestureDetector(
+                  onTap: () {
+                    if (isProcessing && localPath == null) return; // Don't navigate if processing and no local path
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PostDetailScreen(postId: post.id),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    height: 240,
+                    color: Colors.black,
+                    child: isProcessing
+                        ? (localPath != null
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  _buildVideoPlayer(localPath),
+                                  _buildUploadOverlay(progress),
+                                ],
+                              )
+                            : _buildProcessingIndicator(post.userId))
+                        : post.contentUrl.isNotEmpty
+                            ? _buildVideoPlayer(post.contentUrl)
+                            : const Center(
+                                child: CircleAvatar(
+                                  radius: 24,
+                                  backgroundColor: Colors.black54,
+                                  child: Icon(LucideIcons.play, color: Colors.white, size: 24),
+                                ),
+                              ),
                   ),
                 );
               },
-              child: Container(
-                width: double.infinity,
-                height: 240,
-                color: Colors.black,
-                child: post.contentUrl.isNotEmpty
-                    ? _buildVideoPlayer(post.contentUrl)
-                    : const Center(
-                        child: CircleAvatar(
-                          radius: 24,
-                          backgroundColor: Colors.black54,
-                          child: Icon(LucideIcons.play, color: Colors.white, size: 24),
-                        ),
-                      ),
-              ),
             ),
 
           // Like & Comment Actions

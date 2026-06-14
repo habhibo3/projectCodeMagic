@@ -1,10 +1,10 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import '../engine/ranking_engine.dart';
-import '../models/entry.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
 
@@ -23,6 +23,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   File? _mediaFile;
   bool _isUploading = false;
+  double _uploadProgress = 0.0;
 
   @override
   void initState() {
@@ -132,13 +133,25 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ),
             actions: [
               if (_isUploading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Center(
-                    child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
+                        ),
+                        if (_selectedType == 'video' && _uploadProgress > 0 && _uploadProgress < 1.0) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '${(_uploadProgress * 100).toInt()}%',
+                            style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 )
@@ -162,22 +175,60 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
                     try {
                       String mediaUrl = '';
-                      if (_selectedType != 'text' && _mediaFile != null) {
-                        mediaUrl = await engine.uploadPostMedia(_mediaFile!);
-                      }
+                      bool isVideoProcessing = false;
 
-                      await engine.createPost(
-                        type: _selectedType,
-                        contentUrl: _selectedType == 'text' ? _textController.text.trim() : mediaUrl,
-                        caption: _selectedType == 'text' ? 'A text performance' : _textController.text.trim(),
-                        visibilityScope: _selectedScope,
-                      );
+                      if (_selectedType != 'text' && _mediaFile != null) {
+                        if (_selectedType == 'video') {
+                          // For videos, create post first with placeholder, then upload in background
+                          isVideoProcessing = true;
+                          final postId = await engine.createPost(
+                            type: _selectedType,
+                            contentUrl: 'processing',
+                            caption: _textController.text.trim(),
+                            visibilityScope: _selectedScope,
+                          );
+
+                          // Register video local path and progress to current user's feed session
+                          engine.setLocalVideoPath(postId, _mediaFile!.path);
+                          engine.setUploadProgress(postId, 0.0);
+
+                          // Upload video in background with progress tracking stored in engine
+                          engine.uploadPostMedia(_mediaFile!, onProgress: (progress) {
+                            engine.setUploadProgress(postId, progress);
+                          }).then((url) async {
+                            // Update post with actual video URL using the known postId
+                            await engine.updatePost(postId, contentUrl: url);
+                            engine.clearUploadTask(postId);
+                          }).catchError((e) {
+                            debugPrint('Video upload failed: $e');
+                            engine.clearUploadTask(postId);
+                          });
+                        } else {
+                          mediaUrl = await engine.uploadPostMedia(_mediaFile!);
+                          await engine.createPost(
+                            type: _selectedType,
+                            contentUrl: mediaUrl,
+                            caption: _textController.text.trim(),
+                            visibilityScope: _selectedScope,
+                          );
+                        }
+                      } else {
+                        await engine.createPost(
+                          type: _selectedType,
+                          contentUrl: _textController.text.trim(),
+                          caption: _selectedType == 'text' ? 'A text performance' : _textController.text.trim(),
+                          visibilityScope: _selectedScope,
+                        );
+                      }
 
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Post successfully published on profile!'),
+                          SnackBar(
+                            content: Text(isVideoProcessing 
+                              ? 'Post created! Video is processing and will be available shortly.' 
+                              : 'Post successfully published on profile!'),
                             backgroundColor: Colors.green,
+                            duration: isVideoProcessing ? const Duration(seconds: 4) : const Duration(seconds: 2),
                           ),
                         );
                         Navigator.pop(context);
@@ -193,7 +244,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                     }
                   },
                   child: const Text(
-                    'SHARE',
+                    'POST',
                     style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
                   ),
                 ),
@@ -295,7 +346,21 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                                 fit: StackFit.expand,
                                 children: [
                                   _selectedType == 'image'
-                                      ? Image.file(_mediaFile!, fit: BoxFit.cover)
+                                      ? kIsWeb
+                                          ? Container(
+                                              color: Colors.grey.shade900,
+                                              child: const Center(
+                                                child: Column(
+                                                  mainAxisAlignment: MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(LucideIcons.image, color: Colors.white30, size: 48),
+                                                    SizedBox(height: 8),
+                                                    Text('Image selected', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                                  ],
+                                                ),
+                                              ),
+                                            )
+                                          : Image.file(_mediaFile!, fit: BoxFit.cover)
                                       : Container(
                                           color: Colors.black,
                                           child: const Center(
