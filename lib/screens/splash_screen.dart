@@ -95,7 +95,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
             // App Name
             const Text(
-              'FeastVote',
+              'Mlivecast',
               style: TextStyle(
                 fontSize: 48,
                 fontWeight: FontWeight.w900,

@@ -142,6 +142,36 @@ function initializeAgora(appId) {
   console.log('initializeAgora called, loading SDK first...');
   
   return new Promise(async (resolve, reject) => {
+    // Clean up any existing connection & tracks (e.g. from a hot restart) to prevent connection leaks
+    if (agoraClient) {
+      try {
+        console.log('Cleaning up previous active Agora client connection...');
+        await agoraClient.leave();
+      } catch (e) {
+        console.warn('Error leaving previous client:', e);
+      }
+      agoraClient = null;
+    }
+    if (localAudioTrack) {
+      try {
+        localAudioTrack.stop();
+        localAudioTrack.close();
+      } catch (e) {
+        console.warn('Error closing local audio track:', e);
+      }
+      localAudioTrack = null;
+    }
+    if (localVideoTrack) {
+      try {
+        localVideoTrack.stop();
+        localVideoTrack.close();
+      } catch (e) {
+        console.warn('Error closing local video track:', e);
+      }
+      localVideoTrack = null;
+    }
+    remoteUsers = {};
+
     try {
       await loadAgoraSDK();
       console.log('SDK loaded, creating client...');
@@ -218,8 +248,29 @@ async function joinChannel(appId, channel, userId, token) {
     await agoraClient.setClientRole(role);
     
     console.log('Joining channel with uid:', uid);
-    await agoraClient.join(appId, channel, token || null, uid);
-    console.log('Joined channel:', channel, 'with uid:', uid);
+    
+    // Add retry logic for join operation
+    let joinAttempts = 0;
+    const maxJoinAttempts = 3;
+    let joined = false;
+    
+    while (!joined && joinAttempts < maxJoinAttempts) {
+      try {
+        await agoraClient.join(appId, channel, token || null, uid);
+        joined = true;
+        console.log('Joined channel:', channel, 'with uid:', uid);
+      } catch (joinError) {
+        joinAttempts++;
+        console.error(`Join attempt ${joinAttempts} failed:`, joinError);
+        
+        if (joinAttempts < maxJoinAttempts) {
+          console.log(`Retrying join in 2 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          throw joinError;
+        }
+      }
+    }
     
     // Create and publish local tracks ONLY if broadcaster
     if (isBroadcaster) {
@@ -349,3 +400,15 @@ function waitForSDK(callback, maxAttempts = 50, interval = 100) {
       callback(false);
     });
 }
+
+// Add event listener to leave channel when the window/tab is closed or reloaded
+window.addEventListener('beforeunload', () => {
+  if (agoraClient) {
+    try {
+      agoraClient.leave();
+      console.log('Left Agora channel on page unload');
+    } catch (e) {
+      console.error('Failed to leave channel on page unload:', e);
+    }
+  }
+});

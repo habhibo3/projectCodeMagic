@@ -512,6 +512,40 @@ class RankingEngine extends ChangeNotifier {
     );
   }
 
+  Future<void> startHostSession({
+    required String entryId,
+    required String hostUserId,
+    required String hostName,
+    required String hostAvatar,
+    required String channelId,
+  }) async {
+    if (_currentContestId == null) return;
+    return _liveSessionService.startHostSession(
+      contestId: _currentContestId!,
+      entryId: entryId,
+      hostUserId: hostUserId,
+      hostName: hostName,
+      hostAvatar: hostAvatar,
+      channelId: channelId,
+    );
+  }
+
+  Future<void> updateSessionLayout({
+    required String entryId,
+    required bool isSplitScreen,
+    required String cameraView,
+    required bool showChatInRightPanel,
+  }) async {
+    if (_currentContestId == null) return;
+    return _liveSessionService.updateSessionLayout(
+      contestId: _currentContestId!,
+      entryId: entryId,
+      isSplitScreen: isSplitScreen,
+      cameraView: cameraView,
+      showChatInRightPanel: showChatInRightPanel,
+    );
+  }
+
   Stream<List<PostModel>> getMyPosts() {
     return _firebaseService.getUserPosts(currentUserId);
   }

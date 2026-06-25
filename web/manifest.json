@@ -1,6 +1,6 @@
 {
-    "name": "contest_live",
-    "short_name": "contest_live",
+    "name": "Mlivecast",
+    "short_name": "Mlivecast",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

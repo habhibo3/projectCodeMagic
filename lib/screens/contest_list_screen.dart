@@ -25,6 +25,7 @@ import 'post_detail_screen.dart';
 import 'public_profile_screen.dart';
 import 'feed_screen.dart';
 import 'edit_post_screen.dart';
+import 'subscription_upgrade_screen.dart';
 
 // ---------------------------------------------------------------------------
 // ROOT SHELL — holds the persistent BottomNavigationBar + nested Navigator
@@ -240,7 +241,7 @@ class _HomeTabState extends State<_HomeTab> {
                 children: [
                   const Icon(LucideIcons.flame, color: AppTheme.primary),
                   const SizedBox(width: 8),
-                  const Text('FEASTVOTE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 1)),
+                  const Text('MLIVECAST', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 1)),
                 ],
               ),
         actions: [
@@ -535,7 +536,28 @@ class _HomeTabState extends State<_HomeTab> {
                 children: [
                   Text(contest.title,
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20, height: 1.2)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
+                  StreamBuilder<UserModel?>(
+                    stream: Provider.of<RankingEngine>(context, listen: false).watchUserProfile(contest.creatorId),
+                    builder: (context, snapshot) {
+                      final name = snapshot.data?.displayName ?? 'Organizer';
+                      return Row(
+                        children: [
+                          const Icon(LucideIcons.user, size: 12, color: Colors.white54),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Organized by $name',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 6),
                   Text(contest.subtitle,
                       style: const TextStyle(color: Colors.white70, fontSize: 14)),
                   const SizedBox(height: 16),
@@ -634,6 +656,23 @@ class _HomeTabState extends State<_HomeTab> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, height: 1.2)),
+                    const SizedBox(height: 4),
+                    StreamBuilder<UserModel?>(
+                      stream: Provider.of<RankingEngine>(context, listen: false).watchUserProfile(contest.creatorId),
+                      builder: (context, snapshot) {
+                        final name = snapshot.data?.displayName ?? 'Organizer';
+                        return Text(
+                          'by $name',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        );
+                      },
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -1729,7 +1768,116 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                 ),
                 const SizedBox(height: 24),
 
-                // 4. STATS SUMMARY CARD
+                // 4. SUBSCRIPTION CARD
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141416),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'SUBSCRIPTION',
+                            style: TextStyle(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: user.subscriptionLevel == 'premium' 
+                                  ? AppTheme.primary.withOpacity(0.2)
+                                  : Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  user.subscriptionLevel == 'premium' ? LucideIcons.crown : LucideIcons.user,
+                                  size: 12,
+                                  color: user.subscriptionLevel == 'premium' ? AppTheme.primary : Colors.white54,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  user.subscriptionLevel.toUpperCase(),
+                                  style: TextStyle(
+                                    color: user.subscriptionLevel == 'premium' ? AppTheme.primary : Colors.white54,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        user.subscriptionLevel == 'premium'
+                            ? 'Unlimited voting, global contests, ad-free experience'
+                            : 'Limited voting, local contests, basic features',
+                        style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
+                      ),
+                      const SizedBox(height: 16),
+                      if (user.subscriptionLevel != 'premium')
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 0,
+                            ),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const SubscriptionUpgradeScreen(),
+                                ),
+                              );
+                            },
+                            icon: const Icon(LucideIcons.crown, size: 16),
+                            label: const Text('Upgrade to Premium', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        )
+                      else
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white54,
+                              side: BorderSide(color: Colors.white.withOpacity(0.2)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const SubscriptionUpgradeScreen(),
+                                ),
+                              );
+                            },
+                            icon: const Icon(LucideIcons.settings, size: 16),
+                            label: const Text('Manage Subscription', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // 5. STATS SUMMARY CARD
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(

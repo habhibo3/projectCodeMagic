@@ -31,8 +31,8 @@ class NotificationModel {
       timestamp: timestampData is Timestamp 
           ? timestampData.toDate() 
           : DateTime.now(),
-      senderName: data['senderName'] ?? 'FeastVote',
-      senderAvatar: data['senderAvatar'] ?? 'https://i.pravatar.cc/150?u=feastvote',
+      senderName: data['senderName'] ?? 'Mlivecast',
+      senderAvatar: data['senderAvatar'] ?? 'https://i.pravatar.cc/150?u=mlivecast',
     );
   }
 

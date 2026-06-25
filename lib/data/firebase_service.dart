@@ -10,11 +10,14 @@ import '../models/user.dart';
 import '../models/post.dart';
 import '../models/notification.dart';
 import 'mock_data.dart';
+import '../utils/web_blob_reader.dart';
+import 'cache_service.dart';
 
 
 class FirebaseService {
   FirebaseFirestore? _db;
   bool _isInitialized = false;
+  final CacheService _cache = CacheService();
 
   static UserModel? _mockUserProfile;
   static final StreamController<UserModel?> _mockUserStreamController = StreamController<UserModel?>.broadcast();
@@ -31,6 +34,11 @@ class FirebaseService {
       debugPrint('Firebase not initialized. Falling back to mock data: $e');
       _isInitialized = false;
     }
+    
+    // Clear expired cache entries periodically
+    Timer.periodic(const Duration(minutes: 30), (_) {
+      _cache.clearExpired();
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -41,9 +49,13 @@ class FirebaseService {
       return Stream.value(MockData.getContests());
     }
 
+    final cacheKey = 'contests';
+    final cached = _cache.get<List<ContestModel>>(cacheKey);
+    
     return _db!.collection('contests').snapshots().map((snapshot) {
       if (snapshot.docs.isEmpty) return MockData.getContests();
-      return snapshot.docs.map((doc) {
+      
+      final contests = snapshot.docs.map((doc) {
         final data = doc.data();
         return ContestModel(
           id: doc.id,
@@ -70,6 +82,10 @@ class FirebaseService {
           visibilityScope: data['visibilityScope'] ?? 'global',
         );
       }).toList();
+      
+      // Cache with 5-minute TTL
+      _cache.set(cacheKey, contests, ttl: const Duration(minutes: 5));
+      return contests;
     });
   }
 
@@ -80,6 +96,8 @@ class FirebaseService {
     if (!_isInitialized || _db == null) {
       return Stream.value([]);
     }
+
+    final cacheKey = 'entries_$contestId';
 
     return _db!
         .collection('contests')
@@ -137,6 +155,8 @@ class FirebaseService {
         return cmp;
       });
       
+      // Cache with 2-minute TTL for entries (more frequent updates)
+      _cache.set(cacheKey, entries, ttl: const Duration(minutes: 2));
       return entries;
     });
   }
@@ -354,7 +374,7 @@ class FirebaseService {
     const defaultFlag = '🇹🇳';
 
     await ref.set({
-      'displayName': 'FeastVote Player',
+      'displayName': 'Mlivecast Player',
       'email': '',
       'photoURL': '',
       'role': 'contestant',
@@ -402,7 +422,13 @@ class FirebaseService {
           .child('users')
           .child(uid)
           .child('profile.jpg');
-      await ref.putFile(file);
+      
+      if (kIsWeb) {
+        final bytes = await WebBlobReader.readBlobBytes(file.path);
+        await ref.putData(bytes, firebase_storage.SettableMetadata(contentType: 'image/jpeg'));
+      } else {
+        await ref.putFile(file);
+      }
       final downloadUrl = await ref.getDownloadURL();
       
       // Update user doc
@@ -448,7 +474,14 @@ class FirebaseService {
           .child('posts')
           .child(fileName);
       
-      final uploadTask = ref.putFile(file);
+      final firebase_storage.UploadTask uploadTask;
+      if (kIsWeb) {
+        final bytes = await WebBlobReader.readBlobBytes(file.path);
+        final mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
+        uploadTask = ref.putData(bytes, firebase_storage.SettableMetadata(contentType: mimeType));
+      } else {
+        uploadTask = ref.putFile(file);
+      }
       
       if (onProgress != null) {
         uploadTask.snapshotEvents.listen((event) {
@@ -656,12 +689,12 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: userId,
           displayName: 'James USA',
-          email: 'james@feastvote.com',
+          email: 'james@mlivecast.com',
           photoURL: '',
           role: 'contestant',
           country: 'United States',
           countryFlag: '🇺🇸',
-          bio: 'FeastVote regular performer.',
+          bio: 'Mlivecast regular performer.',
           createdAt: DateTime.now(),
           totalVotesCast: 120,
         );
@@ -671,9 +704,18 @@ class FirebaseService {
       return;
     }
 
+    final cacheKey = 'user_$userId';
+    final cached = _cache.get<UserModel>(cacheKey);
+    if (cached != null) {
+      yield cached;
+    }
+
     yield* _db!.collection('users').doc(userId).snapshots().map((doc) {
       if (!doc.exists) return null;
-      return UserModel.fromFirestore(doc);
+      final user = UserModel.fromFirestore(doc);
+      // Cache user profiles with 10-minute TTL
+      _cache.set(cacheKey, user, ttl: const Duration(minutes: 10));
+      return user;
     });
   }
 
@@ -1405,7 +1447,7 @@ class FirebaseService {
       final fallbackPost = index != -1 ? _mockPosts[index] : PostModel(
         id: postId,
         userId: 'current_user',
-        userName: 'FeastVote Player',
+        userName: 'Mlivecast Player',
         userAvatar: '',
         type: 'text',
         contentUrl: '',

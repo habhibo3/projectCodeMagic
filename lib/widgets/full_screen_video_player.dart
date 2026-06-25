@@ -105,15 +105,30 @@ class _FullScreenVideoPlayerState extends State<FullScreenVideoPlayer> {
 
   void _togglePlayPause() {
     if (_controller == null) return;
-    setState(() {
-      if (_controller!.value.isPlaying) {
-        _controller!.pause();
+    if (_controller!.value.isPlaying) {
+      _controller!.pause();
+      setState(() {});
+    } else {
+      final pos = _controller!.value.position;
+      final dur = _controller!.value.duration;
+      if (pos >= dur - const Duration(milliseconds: 200)) {
+        _controller!.seekTo(Duration.zero).then((_) {
+          if (mounted) {
+            _controller!.play();
+            setState(() {
+              _showControls = false;
+              _hideControlsTimer();
+            });
+          }
+        });
       } else {
         _controller!.play();
-        _showControls = false;
-        _hideControlsTimer();
+        setState(() {
+          _showControls = false;
+          _hideControlsTimer();
+        });
       }
-    });
+    }
   }
 
   void _toggleMute() {

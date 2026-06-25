@@ -10,8 +10,15 @@ class AvatarHelper {
     if (avatarUrl == null || avatarUrl.isEmpty) {
       return const CachedNetworkImageProvider('https://i.pravatar.cc/150?u=anonymous');
     }
-    if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://') || avatarUrl.startsWith('content://')) {
+    if (avatarUrl.startsWith('http://') || 
+        avatarUrl.startsWith('https://') || 
+        avatarUrl.startsWith('content://') ||
+        (kIsWeb && avatarUrl.startsWith('blob:'))) {
       return CachedNetworkImageProvider(avatarUrl);
+    }
+    // Safeguard: on mobile, if a blob URL is stored, return default placeholder to avoid PathNotFoundException
+    if (avatarUrl.startsWith('blob:')) {
+      return const CachedNetworkImageProvider('https://i.pravatar.cc/150?u=anonymous');
     }
     // On web, FileImage is not supported, return network placeholder
     if (kIsWeb) {
@@ -24,7 +31,9 @@ class AvatarHelper {
     if (contentUrl == null || contentUrl.isEmpty) {
       return Container(color: Colors.grey.shade900);
     }
-    if (contentUrl.startsWith('http://') || contentUrl.startsWith('https://')) {
+    if (contentUrl.startsWith('http://') || 
+        contentUrl.startsWith('https://') ||
+        (kIsWeb && contentUrl.startsWith('blob:'))) {
       return CachedNetworkImage(
         imageUrl: contentUrl,
         width: width,
@@ -41,6 +50,17 @@ class AvatarHelper {
           ),
         ),
         errorWidget: (context, url, error) => Container(color: Colors.grey.shade900),
+      );
+    }
+    // Safeguard: on mobile, if a blob URL is stored, return placeholder
+    if (contentUrl.startsWith('blob:')) {
+      return Container(
+        width: width,
+        height: height,
+        color: Colors.grey.shade900,
+        child: const Center(
+          child: Icon(LucideIcons.image, color: Colors.white30, size: 32),
+        ),
       );
     }
     // On web, Image.file is not supported

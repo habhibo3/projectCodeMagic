@@ -517,12 +517,21 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
                                             ),
                                     ),
                                     Padding(
-                                      padding: const EdgeInsets.all(8.0),
+                                      padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 0),
                                       child: Text(
                                         post.caption,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
+                                      child: Text(
+                                        'by ${post.userName}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.white54, fontSize: 9),
                                       ),
                                     ),
                                     const Spacer(),

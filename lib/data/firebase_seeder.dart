@@ -19,7 +19,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u1',
           displayName: 'James USA',
-          email: 'james@feastvote.com',
+          email: 'james@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=1',
           role: 'contestant',
           country: 'United States',
@@ -31,7 +31,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u2',
           displayName: 'Lan Vietnam',
-          email: 'lan@feastvote.com',
+          email: 'lan@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=2',
           role: 'contestant',
           country: 'Vietnam',
@@ -43,7 +43,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u3',
           displayName: 'Wei China',
-          email: 'wei@feastvote.com',
+          email: 'wei@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=3',
           role: 'contestant',
           country: 'China',
@@ -55,7 +55,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u4',
           displayName: 'Sophie France',
-          email: 'sophie@feastvote.com',
+          email: 'sophie@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=4',
           role: 'contestant',
           country: 'France',
@@ -67,7 +67,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u5',
           displayName: 'Yuki Japan',
-          email: 'yuki@feastvote.com',
+          email: 'yuki@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=5',
           role: 'contestant',
           country: 'Japan',
@@ -79,12 +79,12 @@ class FirebaseSeeder {
         UserModel(
           uid: 'current_user',
           displayName: 'Gordon Ramsey',
-          email: 'gordon@feastvote.com',
+          email: 'gordon@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=99',
           role: 'judge',
           country: 'United Kingdom',
           countryFlag: '🇬🇧',
-          bio: 'Official FeastVote Judge. Rating content with critical and objective standards.',
+          bio: 'Official Mlivecast Judge. Rating content with critical and objective standards.',
           createdAt: DateTime.now(),
           totalVotesCast: 32,
         ),

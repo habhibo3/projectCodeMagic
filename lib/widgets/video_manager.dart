@@ -45,6 +45,52 @@ class VideoManager {
 
   String? _currentPlayingVideo;
 
+  // Track visible fraction of each video in feeds to auto-play the one with highest visibility percentage
+  final Map<String, double> _visibleFractions = {};
+
+  void setVisibleFraction(String url, double fraction) {
+    if (fraction <= 0.05) {
+      _visibleFractions.remove(url);
+    } else {
+      _visibleFractions[url] = fraction;
+    }
+    _updateActiveVideoFromFractions();
+  }
+
+  void removeVisibleFraction(String url) {
+    _visibleFractions.remove(url);
+    _updateActiveVideoFromFractions();
+  }
+
+  void _updateActiveVideoFromFractions() {
+    if (_visibleFractions.isEmpty) {
+      if (activeVideoUrl.value != null) {
+        activeVideoUrl.value = null;
+      }
+      return;
+    }
+
+    String? maxUrl;
+    double maxFraction = -1.0;
+
+    _visibleFractions.forEach((url, fraction) {
+      if (fraction > maxFraction) {
+        maxFraction = fraction;
+        maxUrl = url;
+      }
+    });
+
+    if (maxUrl != null && maxFraction > 0.15) {
+      if (activeVideoUrl.value != maxUrl) {
+        activeVideoUrl.value = maxUrl;
+      }
+    } else {
+      if (activeVideoUrl.value != null) {
+        activeVideoUrl.value = null;
+      }
+    }
+  }
+
   void _printStats() {
     debugPrint('=== VIDEOMANAGER STATS ===');
     debugPrint('Active controllers count: ${_activeControllers.length}');

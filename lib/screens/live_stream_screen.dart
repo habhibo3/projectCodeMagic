@@ -144,6 +144,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         }
         engine.trackEntryView(_selectedEntry?.id ?? _entryId!);
         _listenLiveSession(engine);
+
+        if (widget.isHost) {
+          final profile = engine.currentUserProfile;
+          engine.startHostSession(
+            entryId: _entryId!,
+            hostUserId: engine.currentUserId,
+            hostName: profile?.displayName ?? 'Organizer',
+            hostAvatar: profile?.photoURL ?? '',
+            channelId: _entryId!,
+          );
+        }
       } else if (_allEntries.isNotEmpty) {
         _selectedEntry = _allEntries.first;
         engine.trackEntryView(_selectedEntry!.id);
@@ -170,6 +181,27 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final coHostAvatar = session['coHostAvatar'] as String?;
       final coHostUserId = session['coHostUserId'] as String?;
       debugPrint('[LiveStream] _listenLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}');
+
+      // Sync layout states in real-time for non-hosts
+      if (!widget.isHost) {
+        final isSplit = session['isSplitScreen'] as bool?;
+        final camViewStr = session['cameraView'] as String?;
+        final showChat = session['showChatInRightPanel'] as bool?;
+
+        setState(() {
+          if (isSplit != null) {
+            _isSplitScreen = isSplit;
+          }
+          if (camViewStr != null) {
+            try {
+              _cameraView = CameraView.values.firstWhere((e) => e.name == camViewStr);
+            } catch (_) {}
+          }
+          if (showChat != null) {
+            _showChatInRightPanel = showChat;
+          }
+        });
+      }
 
       if (status == 'live' && coHostUserId != null) {
         _hasEverBeenLive = true;
@@ -229,6 +261,18 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         });
       }
     });
+  }
+
+  void _updateSessionLayout() {
+    if (widget.isHost && _entryId != null) {
+      final engine = Provider.of<RankingEngine>(context, listen: false);
+      engine.updateSessionLayout(
+        entryId: _entryId!,
+        isSplitScreen: _isSplitScreen,
+        cameraView: _cameraView.name,
+        showChatInRightPanel: _showChatInRightPanel,
+      );
+    }
   }
 
   Future<void> initAgora() async {
@@ -336,6 +380,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
               }
             }
           });
+          if (widget.isHost) {
+            _updateSessionLayout();
+          }
         },
         onUserOffline: (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
           debugPrint('[LiveStream] Agora onUserOffline — remoteUid=$remoteUid, reason=$reason');
@@ -347,6 +394,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
               _cameraView = CameraView.hostOnly;
             }
           });
+          if (widget.isHost) {
+            _updateSessionLayout();
+          }
           // Kick cohost out if host goes offline → go to HOME
           if (widget.isCoHost && remoteUid == kHostAgoraUid) {
             debugPrint('[LiveStream] Host went offline — co-host navigating to HOME');
@@ -393,31 +443,49 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         : (widget.isCoHost ? kCoHostAgoraUid : 0);
 
     debugPrint('[LiveStream] initAgora — joining channel=$_channelId as uid=$joinUid');
-    try {
-      await _engine.joinChannel(
-        token: token,
-        channelId: _channelId,
-        uid: joinUid,
-        options: ChannelMediaOptions(
-          clientRoleType: _isBroadcaster
-              ? ClientRoleType.clientRoleBroadcaster
-              : ClientRoleType.clientRoleAudience,
-          publishCameraTrack: _isBroadcaster,
-          publishMicrophoneTrack: _isBroadcaster,
-          autoSubscribeAudio: true,
-          autoSubscribeVideo: true,
-        ),
-      );
-      debugPrint('[LiveStream] initAgora — joinChannel call succeeded');
-    } catch (e) {
-      debugPrint('[LiveStream] initAgora — joinChannel FAILED: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to join channel: $e'),
-            backgroundColor: Colors.redAccent,
+    
+    // Add retry logic for mobile join channel
+    int joinAttempts = 0;
+    const maxJoinAttempts = 3;
+    bool joined = false;
+    
+    while (!joined && joinAttempts < maxJoinAttempts) {
+      try {
+        await _engine.joinChannel(
+          token: token,
+          channelId: _channelId,
+          uid: joinUid,
+          options: ChannelMediaOptions(
+            clientRoleType: _isBroadcaster
+                ? ClientRoleType.clientRoleBroadcaster
+                : ClientRoleType.clientRoleAudience,
+            publishCameraTrack: _isBroadcaster,
+            publishMicrophoneTrack: _isBroadcaster,
+            autoSubscribeAudio: true,
+            autoSubscribeVideo: true,
           ),
         );
+        joined = true;
+        debugPrint('[LiveStream] initAgora — joinChannel call succeeded');
+      } catch (e) {
+        joinAttempts++;
+        debugPrint('[LiveStream] initAgora — joinChannel attempt $joinAttempts FAILED: $e');
+        
+        if (joinAttempts < maxJoinAttempts) {
+          debugPrint('[LiveStream] Retrying join in 2 seconds...');
+          await Future.delayed(const Duration(seconds: 2));
+        } else {
+          debugPrint('[LiveStream] initAgora — all join attempts failed');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to join channel after $maxJoinAttempts attempts: $e'),
+                backgroundColor: Colors.redAccent,
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+        }
       }
     }
   }
@@ -719,12 +787,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         final showCoHostCam = hasCoHostSlot &&
             (_cameraView == CameraView.coHostOnly ||
                 _cameraView == CameraView.splitBoth);
-        final showAnalytics = _isSplitScreen;
-
-        final bannerTitle = widget.contest.title;
-        final bannerSubtitle = _isCoHostConnected
-            ? '${_nameForEntry(hostEntry, engine)} · Organizer | ${_coHostEntry?.userName ?? "Co-Host"} · Co-Host'
-            : '${_nameForEntry(hostEntry, engine)} · Organizer';
+        // final showAnalytics = _isSplitScreen;
+        // final bannerTitle = widget.contest.title;
+        // final bannerSubtitle = _isCoHostConnected
+        //     ? '${_nameForEntry(hostEntry, engine)} · Organizer | ${_coHostEntry?.userName ?? "Co-Host"} · Co-Host'
+        //     : '${_nameForEntry(hostEntry, engine)} · Organizer';
 
         return Scaffold(
           backgroundColor: const Color(0xFF070707),
@@ -743,29 +810,31 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                           // 1. Host Video panel
                           if (showHostCam)
                             Expanded(
-                              flex: showAnalytics ? 3 : 5,
+                              flex: _isSplitScreen
+                                  ? 3 // Host video takes 20% of 15 (if split screen)
+                                  : (showCoHostCam ? 5 : 5), // 50% (co-host present) or 100% (alone in fullscreen)
                               child: _buildHostVideoPanel(hostEntry, _coHostEntry, engine),
                             ),
   
-                          // Divider line
-                          Container(width: 2, color: Colors.black),
-  
-                          // 2. Co-Host Video panel OR Selected Entry Card
-                          Expanded(
-                            flex: showAnalytics ? 3 : 5,
-                            child: showCoHostCam
-                                ? _buildCoHostVideoPanel(_coHostEntry)
-                                : _buildSelectedEntryScreen(engine),
-                          ),
-  
-                          // Divider line
-                          if (showAnalytics)
+                          // Divider line 1 (only if Column 2 or Column 3 is shown)
+                          if (showHostCam && (showCoHostCam || _isSplitScreen))
                             Container(width: 2, color: Colors.black),
   
-                          // 3. Right Analytics Panel (split screen stats & chat)
-                          if (showAnalytics)
+                          // 2. Co-Host Video panel
+                          if (showCoHostCam)
                             Expanded(
-                              flex: 4,
+                              flex: _isSplitScreen ? 3 : 5, // Co-host video takes 20% (split screen) or 50% (fullscreen)
+                              child: _buildCoHostVideoPanel(_coHostEntry),
+                            ),
+  
+                          // Divider line 2 (only if Column 3 is shown and Column 2 was shown)
+                          if (_isSplitScreen && showCoHostCam)
+                            Container(width: 2, color: Colors.black),
+  
+                          // 3. Right Analytics Panel (representing the rest of the screen)
+                          if (_isSplitScreen)
+                            Expanded(
+                              flex: showCoHostCam ? 9 : 12, // Takes the remaining 60% (9/15) or 80% (12/15)
                               child: _buildStudioAnalytics(engine),
                             ),
                         ],
@@ -776,7 +845,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                   ],
                 ),
   
-                if (!showAnalytics && (showHostCam || showCoHostCam))
+                // Hiding the big banner to avoid overlap with video nameplates (preserved logic in comments below)
+                /*
+                if (!showAnalytics && (showHostCam || showCoHostCam) && !_isCoHostConnected)
                   Positioned(
                     left: 8,
                     right: 8,
@@ -786,6 +857,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                       subtitle: bannerSubtitle,
                     ),
                   ),
+                */
 
                 // Floating vote particles overlay
                 ..._particles.map((p) => _buildParticleWidget(p)),
@@ -1218,6 +1290,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Widget _buildLiveControlsBar() {
+    if (!widget.isHost && !widget.isCoHost) {
+      return const SizedBox.shrink(); // Hide completely for viewers
+    }
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1228,9 +1304,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.isHost || widget.isCoHost)
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 3 media buttons on the left (visible for both Host and Co-Host)
             Row(
               children: [
                 _buildRoundBtn(
@@ -1248,33 +1324,18 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                     isActive: true,
                     onPressed: _switchCamera),
               ],
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(
-                'VIEWING MODE',
-                style: TextStyle(
-                    color: AppTheme.primary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1),
-              ),
             ),
 
-          const SizedBox(width: 24),
-          // Layout Selectors + Fullscreen Switch
-          Row(
-            children: [
-              if (widget.isHost || widget.isCoHost)
-                _buildViewBtn(
-                  view: CameraView.hostOnly,
-                  label: 'Host',
-                  icon: LucideIcons.user,
-                ),
-              if (widget.isHost || widget.isCoHost)
-                const SizedBox(width: 4),
-              if (_isCoHostConnected || widget.isCoHost) ...[
+            if (widget.isHost) ...[
+              const SizedBox(width: 24),
+              // Layout Selectors (visible only for Host)
+              _buildViewBtn(
+                view: CameraView.hostOnly,
+                label: 'Host',
+                icon: LucideIcons.user,
+              ),
+              const SizedBox(width: 4),
+              if (_isCoHostConnected) ...[
                 _buildViewBtn(
                   view: CameraView.coHostOnly,
                   label: 'Co-Host',
@@ -1288,10 +1349,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                 ),
               ],
               const SizedBox(width: 8),
-              
+
               // Fullscreen Panel Switch
               GestureDetector(
-                onTap: () => setState(() => _isSplitScreen = !_isSplitScreen),
+                onTap: () {
+                  setState(() {
+                    _isSplitScreen = !_isSplitScreen;
+                  });
+                  _updateSessionLayout();
+                },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                   decoration: BoxDecoration(
@@ -1323,7 +1389,12 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
               const SizedBox(width: 6),
               // Toggle Chat / Selected Entry
               GestureDetector(
-                onTap: () => setState(() => _showChatInRightPanel = !_showChatInRightPanel),
+                onTap: () {
+                  setState(() {
+                    _showChatInRightPanel = !_showChatInRightPanel;
+                  });
+                  _updateSessionLayout();
+                },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                   decoration: BoxDecoration(
@@ -1353,106 +1424,80 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                 ),
               ),
             ],
-          ),
 
-          const SizedBox(width: 12),
+            const SizedBox(width: 12),
 
-          // Co-host Invitation or Leave stream
-          if (widget.isHost && !widget.isCoHost)
-            GestureDetector(
-              onTap: () {
-                if (_isCoHostConnected) {
-                  _disconnectCoHost();
-                } else {
-                  _showParticipantsSheet();
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _isCoHostConnected
-                      ? Colors.red.shade900.withValues(alpha: 0.8)
-                      : const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: _isCoHostConnected ? Colors.red : Colors.white24),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                        _isCoHostConnected
-                            ? LucideIcons.userMinus
-                            : LucideIcons.userPlus,
-                        color: Colors.white,
-                        size: 14),
-                    const SizedBox(width: 5),
-                    Text(
-                      _isCoHostConnected ? "Drop Co-Host" : "Invite",
-                      style: const TextStyle(
+            // Action button (Invite/Drop for Host, Leave Co-Host for Co-host)
+            if (widget.isHost)
+              GestureDetector(
+                onTap: () {
+                  if (_isCoHostConnected) {
+                    _disconnectCoHost();
+                  } else {
+                    _showParticipantsSheet();
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _isCoHostConnected
+                        ? Colors.red.shade900.withValues(alpha: 0.8)
+                        : const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: _isCoHostConnected ? Colors.red : Colors.white24),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                          _isCoHostConnected
+                              ? LucideIcons.userMinus
+                              : LucideIcons.userPlus,
                           color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else if (widget.isCoHost)
-            GestureDetector(
-              onTap: () async {
-                if (_entryId != null) {
-                  await Provider.of<RankingEngine>(context, listen: false)
-                      .endCoHostSession(_entryId!);
-                }
-                await _engine.leaveChannel();
-                if (mounted) Navigator.pop(context);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade900.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(LucideIcons.logOut, color: Colors.white, size: 14),
-                    SizedBox(width: 5),
-                    Text('Leave Co-Host',
-                        style: TextStyle(
+                          size: 14),
+                      const SizedBox(width: 5),
+                      Text(
+                        _isCoHostConnected ? "Drop Co-Host" : "Invite",
+                        style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
-                            fontWeight: FontWeight.bold)),
-                  ],
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else if (widget.isCoHost)
+              GestureDetector(
+                onTap: () async {
+                  if (_entryId != null) {
+                    await Provider.of<RankingEngine>(context, listen: false)
+                        .endCoHostSession(_entryId!);
+                  }
+                  await _engine.leaveChannel();
+                  if (mounted) Navigator.pop(context);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade900.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(LucideIcons.logOut, color: Colors.white, size: 14),
+                      SizedBox(width: 5),
+                      Text('Leave Co-Host',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ),
               ),
-            )
-          else
-            GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade900.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(LucideIcons.logOut, color: Colors.white, size: 14),
-                    SizedBox(width: 5),
-                    Text(
-                      "Leave",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
+          ],
         ),
       ),
     );
@@ -1480,7 +1525,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       {required CameraView view, required String label, required IconData icon}) {
     final isSelected = _cameraView == view;
     return GestureDetector(
-      onTap: () => setState(() => _cameraView = view),
+      onTap: () {
+        setState(() => _cameraView = view);
+        _updateSessionLayout();
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
@@ -1512,39 +1560,30 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   Widget _buildStudioAnalytics(RankingEngine engine) {
     final bool isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-
-    final hasCoHostSlot =
-        _isCoHostConnected || (widget.isHost && _coHostEntry != null);
-    final showCoHostCam = hasCoHostSlot &&
-        (_cameraView == CameraView.coHostOnly ||
-            _cameraView == CameraView.splitBoth);
-
-    // If cohost is NOT active, the middle column shows the Selected Entry Card.
-    // In that case, we ALWAYS show the chat feed on the right to prevent dual cards.
-    final showChat = _showChatInRightPanel || !showCoHostCam;
+    final showChat = _showChatInRightPanel;
 
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F0F13),
         border: Border(left: BorderSide(color: Colors.white12)),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (!isKeyboardOpen)
-            Expanded(
-              flex: 4,
-              child: Container(
-                decoration: const BoxDecoration(
-                  border: Border(right: BorderSide(color: Colors.white10)),
-                ),
-                child: _buildAudienceCountryList(engine),
-              ),
-            ),
-          Expanded(
-            flex: 6,
-            child: showChat
-                ? Column(
+      child: showChat
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!isKeyboardOpen)
+                  Expanded(
+                    flex: 3, // Countries take 30% of the rest of the screen
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        border: Border(right: BorderSide(color: Colors.white10)),
+                      ),
+                      child: _buildAudienceCountryList(engine),
+                    ),
+                  ),
+                Expanded(
+                  flex: 7, // Chat takes 70% of the rest of the screen
+                  child: Column(
                     children: [
                       if (!isKeyboardOpen)
                         _buildLiveHeaderBlock(engine),
@@ -1552,11 +1591,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                         child: _buildLiveChatFeed(engine),
                       ),
                     ],
-                  )
-                : _buildSelectedEntryScreen(engine),
-          ),
-        ],
-      ),
+                  ),
+                ),
+              ],
+            )
+          : _buildSelectedEntryScreen(engine), // Show Entry is ON, contest image takes 100% of the rest of the screen
     );
   }
 

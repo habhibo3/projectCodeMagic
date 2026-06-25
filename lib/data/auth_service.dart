@@ -9,6 +9,11 @@ class AuthService {
   static final AuthService instance = AuthService._();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: kIsWeb
+        ? '393250629301-mf6b4svunt0rkeqe65gbivnukcoechj7.apps.googleusercontent.com'
+        : null,
+  );
 
   String? get currentUserId => _auth.currentUser?.uid;
 
@@ -76,6 +81,11 @@ class AuthService {
   /// Signs out the current user.
   Future<void> signOut() async {
     await _auth.signOut();
+    try {
+      await _googleSignIn.signOut();
+    } catch (e) {
+      debugPrint('Error signing out of Google: $e');
+    }
   }
 
   /// Sends a password reset link to the user's email.
@@ -109,7 +119,15 @@ class AuthService {
   /// Signs in with Google.
   Future<UserCredential> signInWithGoogle() async {
     try {
-      final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+      if (kIsWeb) {
+        debugPrint('Google Sign-In Triggered on Web.');
+        debugPrint('Current Browser Origin: ${Uri.base.origin}');
+        debugPrint('Make sure this origin is whitelisted in Google Cloud Console > APIs & Services > Credentials.');
+        if (Uri.base.host == '127.0.0.1') {
+          debugPrint('WARNING: Google OAuth does not allow IP addresses (like 127.0.0.1) as JavaScript origins. Please use "localhost" in your browser URL instead (e.g., http://localhost:${Uri.base.port}).');
+        }
+      }
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser == null) {
         throw Exception('Google sign-in was cancelled');
       }

@@ -73,11 +73,11 @@ class MockData {
         title: 'The Next Star Talent Contest',
         subtitle: 'Show us your talent and be the next star!',
         description:
-            'Welcome to the biggest talent discovery platform on FeastVote! Submit your performance video and let the world decide who the next global star is. Open to all music genres, dance styles, comedy acts, and spoken word artists.',
+            'Welcome to the biggest talent discovery platform on Mlivecast! Submit your performance video and let the world decide who the next global star is. Open to all music genres, dance styles, comedy acts, and spoken word artists.',
         rules:
             '1. Submit one original video (max 3 mins)\n2. No copyrighted music without license\n3. One entry per user\n4. Voting is open to all registered users\n5. Rankings reset every 10 seconds based on momentum',
         prize:
-            '🥇 1st Place: \$5,000 + Recording Contract\n🥈 2nd Place: \$2,000\n🥉 3rd Place: \$500\n🎁 All finalists: FeastVote Pro subscription (1 year)',
+            '🥇 1st Place: \$5,000 + Recording Contract\n🥈 2nd Place: \$2,000\n🥉 3rd Place: \$500\n🎁 All finalists: Mlivecast Pro subscription (1 year)',
         schedule:
             '📅 Submission Open: May 10 – May 20, 2026\n🗳️ Public Voting: May 21 – May 31, 2026\n🏆 Winners Announced: June 1, 2026',
         image: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81',
@@ -99,7 +99,7 @@ class MockData {
         title: 'Global Dance Off',
         subtitle: 'Bring your best moves to the global stage.',
         description:
-            'The Global Dance Off is FeastVote\'s premier dance competition. From hip-hop to classical ballet, every style is welcome. Show the world your rhythm, creativity, and passion for dance!',
+            'The Global Dance Off is Mlivecast\'s premier dance competition. From hip-hop to classical ballet, every style is welcome. Show the world your rhythm, creativity, and passion for dance!',
         rules:
             '1. Video must be at least 60 seconds\n2. Original choreography required\n3. Group entries (max 4 people) allowed\n4. No explicit content\n5. Audience votes determine the winner',
         prize:

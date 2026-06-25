@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -13,8 +14,10 @@ import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/live_stream_screen.dart';
 import 'screens/contest_list_screen.dart';
+import 'screens/admin_dashboard_screen.dart';
 import 'models/cohost_invite.dart';
 import 'models/entry.dart';
+import 'data/admin_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,23 +26,25 @@ void main() async {
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   }
 
+
+
   // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  runApp(const FeastVoteApp());
+  runApp(const MlivecastApp());
 }
 
-class FeastVoteApp extends StatelessWidget {
-  const FeastVoteApp({super.key});
+class MlivecastApp extends StatelessWidget {
+  const MlivecastApp({super.key});
 
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'FeastVote',
+      title: 'Mlivecast',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       navigatorKey: navigatorKey,
@@ -117,6 +122,26 @@ class _WebLayoutWrapper extends StatefulWidget {
 class _WebLayoutWrapperState extends State<_WebLayoutWrapper> {
   int _selectedIndex = 0;
   final ValueNotifier<int?> _navChangeNotifier = ValueNotifier<int?>(null);
+  bool _isAdmin = false;
+  final AdminService _adminService = AdminService();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAdminStatus();
+  }
+
+  Future<void> _checkAdminStatus() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final isAdmin = await _adminService.isAdmin(user.uid);
+      if (mounted) {
+        setState(() {
+          _isAdmin = isAdmin;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -156,7 +181,7 @@ class _WebLayoutWrapperState extends State<_WebLayoutWrapper> {
                       ),
                       const SizedBox(width: 12),
                       const Text(
-                        'FeastVote',
+                        'Mlivecast',
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
@@ -198,6 +223,22 @@ class _WebLayoutWrapperState extends State<_WebLayoutWrapper> {
                   onTap: () => _navigateTo(4),
                   isActive: _selectedIndex == 4,
                 ),
+                if (_isAdmin)
+                  _WebNavItem(
+                    icon: LucideIcons.shield,
+                    label: 'Admin Panel',
+                    onTap: () {
+                      Navigator.of(context).push(
+                        PageRouteBuilder(
+                          pageBuilder: (context, animation, secondaryAnimation) => const AdminDashboardScreen(),
+                          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                            return FadeTransition(opacity: animation, child: child);
+                          },
+                        ),
+                      );
+                    },
+                    isActive: false,
+                  ),
                 const Spacer(),
                 // User section
                 Padding(
@@ -409,7 +450,7 @@ class _GlobalInviteOverlayState extends State<_GlobalInviteOverlay> {
             ),
     );
 
-    final navigatorContext = FeastVoteApp.navigatorKey.currentContext;
+    final navigatorContext = MlivecastApp.navigatorKey.currentContext;
     if (navigatorContext == null) return;
 
     showDialog(
@@ -470,7 +511,7 @@ class _GlobalInviteOverlayState extends State<_GlobalInviteOverlay> {
               Navigator.of(dialogContext).pop();
               _isDialogShowing.value = false;
               if (ok) {
-                final navContext = ContestListScreen.homeNavKey.currentContext ?? FeastVoteApp.navigatorKey.currentContext;
+                final navContext = ContestListScreen.homeNavKey.currentContext ?? MlivecastApp.navigatorKey.currentContext;
                 if (navContext != null) {
                   Navigator.push(
                     navContext,
@@ -485,7 +526,7 @@ class _GlobalInviteOverlayState extends State<_GlobalInviteOverlay> {
                   );
                 }
               } else {
-                final navContext = ContestListScreen.homeNavKey.currentContext ?? FeastVoteApp.navigatorKey.currentContext;
+                final navContext = ContestListScreen.homeNavKey.currentContext ?? MlivecastApp.navigatorKey.currentContext;
                 if (navContext != null) {
                   ScaffoldMessenger.of(navContext).showSnackBar(
                     const SnackBar(

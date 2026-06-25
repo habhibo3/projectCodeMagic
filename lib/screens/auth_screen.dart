@@ -207,7 +207,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                           const SizedBox(height: 16),
                           const Text(
-                            'CONTEST LIVE',
+                            'MLIVECAST',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 26,

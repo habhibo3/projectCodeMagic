@@ -21,9 +21,9 @@ class BroadcastNameplate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nameSize = compact ? 11.0 : 14.0;
-    final roleSize = compact ? 7.0 : 8.0;
-    final barH = compact ? 40.0 : 48.0;
+    final nameSize = compact ? 9.0 : 11.0;
+    final roleSize = compact ? 6.0 : 7.0;
+    final barH = compact ? 32.0 : 38.0;
 
     return Container(
       decoration: BoxDecoration(
@@ -71,7 +71,7 @@ class BroadcastNameplate extends StatelessWidget {
                       children: [
                         Container(
                           width: 5,
-                          height: 5,
+                           height: 5,
                           decoration: const BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
@@ -82,7 +82,7 @@ class BroadcastNameplate extends StatelessWidget {
                           'LIVE',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: compact ? 7 : 8,
+                            fontSize: compact ? 6 : 7,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 0.5,
                           ),
@@ -95,7 +95,7 @@ class BroadcastNameplate extends StatelessWidget {
             ),
           ),
           Container(
-            height: compact ? 16 : 20,
+            height: compact ? 13.0 : 16.0,
             width: double.infinity,
             color: _gold,
             alignment: Alignment.centerLeft,

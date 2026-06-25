@@ -170,6 +170,52 @@ class LiveSessionService {
     }, SetOptions(merge: true));
   }
 
+  Future<void> startHostSession({
+    required String contestId,
+    required String entryId,
+    required String hostUserId,
+    required String hostName,
+    required String hostAvatar,
+    required String channelId,
+  }) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _sessionRef(contestId, entryId).set({
+        'hostUserId': hostUserId,
+        'hostName': hostName,
+        'hostAvatar': hostAvatar,
+        'status': 'live',
+        'channelId': channelId,
+        'isSplitScreen': true,
+        'cameraView': 'hostOnly',
+        'showChatInRightPanel': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to start host session: $e');
+    }
+  }
+
+  Future<void> updateSessionLayout({
+    required String contestId,
+    required String entryId,
+    required bool isSplitScreen,
+    required String cameraView,
+    required bool showChatInRightPanel,
+  }) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _sessionRef(contestId, entryId).set({
+        'isSplitScreen': isSplitScreen,
+        'cameraView': cameraView,
+        'showChatInRightPanel': showChatInRightPanel,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to update session layout: $e');
+    }
+  }
+
   DocumentReference<Map<String, dynamic>> _sessionRef(
       String contestId, String entryId) {
     return _db!

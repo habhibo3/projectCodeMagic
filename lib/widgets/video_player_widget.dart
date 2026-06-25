@@ -13,12 +13,16 @@ class VideoPlayerWidget extends StatefulWidget {
   final String videoUrl;
   final bool isLocal;
   final bool autoPlay;
+  final String? thumbnailUrl;
+  final VoidCallback? onTap;
 
   const VideoPlayerWidget({
     super.key,
     required this.videoUrl,
     required this.isLocal,
     this.autoPlay = true, // Default to true for auto-play in feeds
+    this.thumbnailUrl,
+    this.onTap,
   });
 
   @override
@@ -43,19 +47,11 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     _route = ModalRoute.of(context);
     final isCurrent = _route?.isCurrent ?? true;
     if (!isCurrent) {
-      if (VideoManager().activeVideoUrl.value == widget.videoUrl) {
-        VideoManager().activeVideoUrl.value = null;
-      }
+      VideoManager().removeVisibleFraction(widget.videoUrl);
       _deinitializeVideo();
     } else {
       if (_isVisible) {
-        if (_lastVisibleFraction > 0.5) {
-          VideoManager().activeVideoUrl.value = widget.videoUrl;
-        } else if (VideoManager().activeVideoUrl.value == null) {
-          VideoManager().activeVideoUrl.value = widget.videoUrl;
-        } else if (VideoManager().activeVideoUrl.value == widget.videoUrl) {
-          _initializeVideo();
-        }
+        VideoManager().setVisibleFraction(widget.videoUrl, _lastVisibleFraction);
       }
     }
   }
@@ -90,9 +86,17 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   void _onActiveVideoChanged() {
     if (!mounted) return;
     final activeUrl = VideoManager().activeVideoUrl.value;
-    if (activeUrl == widget.videoUrl) {
-      final isCurrent = _route?.isCurrent ?? true;
-      if (isCurrent && _isVisible) {
+    final isActive = activeUrl == widget.videoUrl;
+
+    if (_isVisible) {
+      if (_isInitialized && _controller != null) {
+        if (isActive && widget.autoPlay) {
+          _controller!.play();
+          VideoManager().pauseAllExcept(widget.videoUrl);
+        } else {
+          _controller!.pause();
+        }
+      } else {
         _initializeVideo();
       }
     } else {
@@ -157,9 +161,13 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
       controller.setLooping(true);
 
-      if (widget.autoPlay && _isVisible) {
+      final activeUrl = VideoManager().activeVideoUrl.value;
+      final isActive = activeUrl == widget.videoUrl;
+      if (widget.autoPlay && _isVisible && isActive) {
         controller.play();
         VideoManager().pauseAllExcept(widget.videoUrl);
+      } else {
+        controller.pause();
       }
     } catch (e) {
       if (mounted && currentSession == _sessionCounter) {
@@ -206,36 +214,27 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     _lastVisibleFraction = info.visibleFraction;
     final visible = _lastVisibleFraction > 0.15;
 
+    final isCurrent = _route?.isCurrent ?? true;
+    if (isCurrent) {
+      VideoManager().setVisibleFraction(widget.videoUrl, _lastVisibleFraction);
+    } else {
+      VideoManager().removeVisibleFraction(widget.videoUrl);
+    }
+
     if (visible == _isVisible) {
-      final isCurrent = _route?.isCurrent ?? true;
-      if (isCurrent && visible) {
-        if (_lastVisibleFraction > 0.5 && VideoManager().activeVideoUrl.value != widget.videoUrl) {
-          VideoManager().activeVideoUrl.value = widget.videoUrl;
-        }
-      }
       return;
     }
 
     _isVisible = visible;
 
-    final isCurrent = _route?.isCurrent ?? true;
     if (!isCurrent) {
       _deinitializeVideo();
       return;
     }
 
     if (visible) {
-      if (_lastVisibleFraction > 0.5) {
-        VideoManager().activeVideoUrl.value = widget.videoUrl;
-      } else if (VideoManager().activeVideoUrl.value == null) {
-        VideoManager().activeVideoUrl.value = widget.videoUrl;
-      } else if (VideoManager().activeVideoUrl.value == widget.videoUrl) {
-        _initializeVideo();
-      }
+      _initializeVideo();
     } else {
-      if (VideoManager().activeVideoUrl.value == widget.videoUrl) {
-        VideoManager().activeVideoUrl.value = null;
-      }
       _deinitializeVideo();
     }
   }
@@ -244,6 +243,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   void dispose() {
     _sessionCounter++; // Invalidate active initializations
     _isVisible = false;
+    VideoManager().removeVisibleFraction(widget.videoUrl);
     VideoManager().activeVideoUrl.removeListener(_onActiveVideoChanged);
     if (_controllerListener != null && _controller != null) {
       _controller!.removeListener(_controllerListener!);
@@ -286,77 +286,103 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
           return Container(
             height: 240,
             color: Colors.black,
-            child: showLoader
-                ? const Center(
-                    child: CircularProgressIndicator(color: AppTheme.primary),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Render the thumbnail/placeholder only if explicitly provided
+                if ((_controller == null || !_isInitialized || showLoader) && widget.thumbnailUrl != null)
+                  Image.network(
+                    widget.thumbnailUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(color: Colors.black),
+                  ),
+                
+                // Show loader or video controller or play overlay
+                if (showLoader)
+                  Container(
+                    color: Colors.black38,
+                    child: const Center(
+                      child: CircularProgressIndicator(color: AppTheme.primary),
+                    ),
                   )
-                : _controller != null && _isInitialized
-                    ? GestureDetector(
-                        onTap: () {
-                          if (VideoManager().activeVideoUrl.value != widget.videoUrl) {
-                            VideoManager().activeVideoUrl.value = widget.videoUrl;
-                            return;
-                          }
-                          
-                          // Pause before navigating to full-screen
-                          _controller?.pause();
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => FullScreenVideoPlayer(
-                                videoUrl: widget.videoUrl,
-                                isLocal: widget.isLocal,
-                              ),
-                            ),
-                          ).then((_) {
-                            // When returning from full-screen, re-evaluate visibility
-                            if (mounted && _isVisible && _isInitialized) {
-                              if (widget.autoPlay) {
-                                _controller?.play();
-                                VideoManager().pauseAllExcept(widget.videoUrl);
-                              }
-                            }
-                          });
-                        },
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            AspectRatio(
-                              aspectRatio: _controller!.value.aspectRatio > 0
-                                  ? _controller!.value.aspectRatio
-                                  : 16 / 9,
-                              child: VideoPlayer(_controller!),
-                            ),
-                            // Play button overlay when paused
-                            if (!_isPlaying)
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.3),
-                                  shape: BoxShape.circle,
-                                ),
-                                padding: const EdgeInsets.all(14),
-                                child: const Icon(LucideIcons.play,
-                                    color: Colors.white, size: 28),
-                              ),
-                          ],
+                else if (_controller != null && _isInitialized)
+                  GestureDetector(
+                    onTap: () {
+                      if (widget.onTap != null) {
+                        widget.onTap!();
+                        return;
+                      }
+                      if (VideoManager().activeVideoUrl.value != widget.videoUrl) {
+                        VideoManager().activeVideoUrl.value = widget.videoUrl;
+                        return;
+                      }
+                      
+                      // Pause before navigating to full-screen
+                      _controller?.pause();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FullScreenVideoPlayer(
+                            videoUrl: widget.videoUrl,
+                            isLocal: widget.isLocal,
+                          ),
                         ),
-                      )
-                    : GestureDetector(
-                        onTap: () {
-                          VideoManager().activeVideoUrl.value = widget.videoUrl;
-                        },
-                        child: Center(
-                          child: Container(
+                      ).then((_) {
+                        // When returning from full-screen, re-evaluate visibility
+                        if (mounted && _isVisible && _isInitialized) {
+                          if (widget.autoPlay) {
+                            _controller?.play();
+                            VideoManager().pauseAllExcept(widget.videoUrl);
+                          }
+                        }
+                      });
+                    },
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Positioned.fill(
+                          child: AspectRatio(
+                            aspectRatio: _controller!.value.aspectRatio > 0
+                                ? _controller!.value.aspectRatio
+                                : 16 / 9,
+                            child: VideoPlayer(_controller!),
+                          ),
+                        ),
+                        // Play button overlay when paused
+                        if (!_isPlaying)
+                          Container(
                             decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.3),
+                              color: Colors.black.withValues(alpha: 0.3),
                               shape: BoxShape.circle,
                             ),
                             padding: const EdgeInsets.all(14),
                             child: const Icon(LucideIcons.play,
                                 color: Colors.white, size: 28),
                           ),
+                      ],
+                    ),
+                  )
+                else
+                  GestureDetector(
+                    onTap: widget.onTap ?? () {
+                      VideoManager().activeVideoUrl.value = widget.videoUrl;
+                    },
+                    child: Container(
+                      color: Colors.black.withValues(alpha: 0.25),
+                      alignment: Alignment.center,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
                         ),
+                        padding: const EdgeInsets.all(14),
+                        child: const Icon(LucideIcons.play,
+                            color: Colors.white, size: 28),
                       ),
+                    ),
+                  ),
+              ],
+            ),
           );
         },
       ),
