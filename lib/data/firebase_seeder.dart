@@ -19,6 +19,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u1',
           displayName: 'James USA',
+          username: 'james_usa',
           email: 'james@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=1',
           role: 'contestant',
@@ -31,6 +32,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u2',
           displayName: 'Lan Vietnam',
+          username: 'lan_vietnam',
           email: 'lan@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=2',
           role: 'contestant',
@@ -43,6 +45,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u3',
           displayName: 'Wei China',
+          username: 'wei_china',
           email: 'wei@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=3',
           role: 'contestant',
@@ -55,6 +58,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u4',
           displayName: 'Sophie France',
+          username: 'sophie_france',
           email: 'sophie@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=4',
           role: 'contestant',
@@ -67,6 +71,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'u5',
           displayName: 'Yuki Japan',
+          username: 'yuki_japan',
           email: 'yuki@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=5',
           role: 'contestant',
@@ -79,6 +84,7 @@ class FirebaseSeeder {
         UserModel(
           uid: 'current_user',
           displayName: 'Gordon Ramsey',
+          username: 'gordon_ramsey',
           email: 'gordon@mlivecast.com',
           photoURL: 'https://i.pravatar.cc/150?u=99',
           role: 'judge',

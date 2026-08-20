@@ -52,6 +52,10 @@ class _VideoElementViewState extends State<_VideoElementView> {
     ui_web.platformViewRegistry.registerViewFactory(
       widget.elementId,
       (int viewId) {
+        // Use 'contain' for screen share to show full content without cropping
+        // Use 'cover' for camera feeds to fill the container
+        final objectFit = widget.elementId == 'screen-share-video' ? 'contain' : 'cover';
+        
         final videoElement = html.VideoElement()
           ..id = widget.elementId
           ..autoplay = true
@@ -59,10 +63,10 @@ class _VideoElementViewState extends State<_VideoElementView> {
           ..setAttribute('playsinline', 'true')
           ..style.width = '100%'
           ..style.height = '100%'
-          ..style.objectFit = 'cover';
+          ..style.objectFit = objectFit;
 
         try {
-          js.context.callMethod('bindVideoElement', [widget.elementId]);
+          js.context.callMethod('bindVideoElement', [videoElement, widget.elementId]);
         } catch (e) {
           debugPrint('Error calling bindVideoElement: $e');
         }

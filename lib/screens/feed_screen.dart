@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
@@ -5,7 +7,7 @@ import '../engine/ranking_engine.dart';
 import '../models/post.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
-import '../widgets/video_player_widget.dart';
+import '../widgets/media_content_preview.dart';
 import 'post_detail_screen.dart';
 import 'public_profile_screen.dart';
 import 'edit_post_screen.dart';
@@ -132,6 +134,7 @@ class _FeedScreenState extends State<FeedScreen> {
         },
       ),
       floatingActionButton: FloatingActionButton(
+        heroTag: null,
         backgroundColor: AppTheme.primary,
         onPressed: () {
           Navigator.push(
@@ -159,19 +162,15 @@ class _FeedScreenState extends State<FeedScreen> {
     }
   }
 
-  Widget _buildVideoPlayer(String videoUrl, PostModel post) {
-    final isLocal = !videoUrl.startsWith('http');
-    return VideoPlayerWidget(
+  /// Shows a still first-frame preview in the feed and never plays the video.
+  Widget _buildVideoPreview(String videoUrl) {
+    return VideoThumbnailPreview(
       videoUrl: videoUrl,
-      isLocal: isLocal,
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PostDetailScreen(postId: post.id),
-          ),
-        );
-      },
+      isLocal: isLocalMediaPath(videoUrl),
+      height: 240,
+      width: double.infinity,
+      fit: BoxFit.contain,
+      showLoadingIndicator: false,
     );
   }
 
@@ -420,32 +419,12 @@ class _FeedScreenState extends State<FeedScreen> {
                                       const Divider(color: Colors.white12),
                                     ],
                                     ListTile(
-                                      leading: const Icon(LucideIcons.bookmark, color: Colors.white),
-                                      title: const Text('Save post', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Post saved!'), behavior: SnackBarBehavior.floating),
-                                        );
-                                      },
-                                    ),
-                                    ListTile(
                                       leading: const Icon(LucideIcons.flag, color: Colors.white),
                                       title: const Text('Report post', style: TextStyle(color: Colors.white)),
                                       onTap: () {
                                         Navigator.pop(context);
                                         ScaffoldMessenger.of(context).showSnackBar(
                                           const SnackBar(content: Text('Post reported'), behavior: SnackBarBehavior.floating),
-                                        );
-                                      },
-                                    ),
-                                    ListTile(
-                                      leading: const Icon(LucideIcons.link, color: Colors.white),
-                                      title: const Text('Copy link', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Link copied to clipboard!'), behavior: SnackBarBehavior.floating),
                                         );
                                       },
                                     ),
@@ -499,10 +478,13 @@ class _FeedScreenState extends State<FeedScreen> {
                     else if (post.type == 'image')
                       GestureDetector(
                         onTap: () {
-                          Navigator.push(
-                            context,
+                          final engine = Provider.of<RankingEngine>(context, listen: false);
+                          Navigator.of(context, rootNavigator: true).push(
                             MaterialPageRoute(
-                              builder: (_) => PostDetailScreen(postId: post.id),
+                              builder: (_) => ChangeNotifierProvider.value(
+                                value: engine,
+                                child: PostDetailScreen(postId: post.id, initialPost: post),
+                              ),
                             ),
                           );
                         },
@@ -531,10 +513,12 @@ class _FeedScreenState extends State<FeedScreen> {
                           return GestureDetector(
                             onTap: () {
                               if (isProcessing && localPath == null) return;
-                              Navigator.push(
-                                context,
+                              Navigator.of(context, rootNavigator: true).push(
                                 MaterialPageRoute(
-                                  builder: (_) => PostDetailScreen(postId: post.id),
+                                  builder: (_) => ChangeNotifierProvider.value(
+                                    value: currentEngine,
+                                    child: PostDetailScreen(postId: post.id, initialPost: post),
+                                  ),
                                 ),
                               );
                             },
@@ -553,13 +537,13 @@ class _FeedScreenState extends State<FeedScreen> {
                                         ? Stack(
                                             fit: StackFit.expand,
                                             children: [
-                                              _buildVideoPlayer(localPath, post),
+                                              _buildVideoPreview(localPath),
                                               _buildUploadOverlay(progress),
                                             ],
                                           )
                                         : _buildProcessingIndicator(post.userId))
                                     : post.contentUrl.isNotEmpty
-                                        ? _buildVideoPlayer(post.contentUrl, post)
+                                        ? _buildVideoPreview(post.contentUrl)
                                         : const Center(
                                             child: CircleAvatar(
                                               radius: 24,
@@ -576,17 +560,17 @@ class _FeedScreenState extends State<FeedScreen> {
                     
                     // Social Action Row (X Style)
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.start,
                       children: [
                         // Comment
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => PostDetailScreen(postId: post.id),
-                              ),
+                            final currentEngine = Provider.of<RankingEngine>(context, listen: false);
+                            showPostCommentsBottomSheet(
+                              context: context,
+                              postId: post.id,
+                              engine: currentEngine,
                             );
                           },
                           child: Row(
@@ -600,21 +584,14 @@ class _FeedScreenState extends State<FeedScreen> {
                             ],
                           ),
                         ),
-                        // Repost
-                        Row(
-                          children: [
-                            const Icon(LucideIcons.repeat, color: Colors.white38, size: 16),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${(post.likes.length * 0.4).round()}',
-                              style: const TextStyle(color: Colors.white38, fontSize: 12),
-                            ),
-                          ],
-                        ),
+                        const SizedBox(width: 28),
                         // Like
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onTap: () => engine.toggleLikePost(post.id),
+                          onTap: () {
+                            final currentEngine = Provider.of<RankingEngine>(context, listen: false);
+                            currentEngine.toggleLikePost(post.id);
+                          },
                           child: Row(
                             children: [
                               Icon(
@@ -632,71 +609,6 @@ class _FeedScreenState extends State<FeedScreen> {
                               ),
                             ],
                           ),
-                        ),
-                        // Views (Mock)
-                        Row(
-                          children: [
-                            const Icon(LucideIcons.barChart2, color: Colors.white38, size: 16),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${(post.likes.length * 12 + 45)}K',
-                              style: const TextStyle(color: Colors.white38, fontSize: 12),
-                            ),
-                          ],
-                        ),
-                        // Bookmark
-                        const Icon(LucideIcons.bookmark, color: Colors.white38, size: 16),
-                        // Share
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            showModalBottomSheet(
-                              context: context,
-                              backgroundColor: const Color(0xFF141416),
-                              shape: const RoundedRectangleBorder(
-                                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                              ),
-                              builder: (context) => Container(
-                                padding: const EdgeInsets.symmetric(vertical: 20),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    ListTile(
-                                      leading: const Icon(LucideIcons.share2, color: Colors.white),
-                                      title: const Text('Share to...', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Share menu opened'), behavior: SnackBarBehavior.floating),
-                                        );
-                                      },
-                                    ),
-                                    ListTile(
-                                      leading: const Icon(LucideIcons.messageCircle, color: Colors.white),
-                                      title: const Text('Send in message', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Message feature coming soon'), behavior: SnackBarBehavior.floating),
-                                        );
-                                      },
-                                    ),
-                                    ListTile(
-                                      leading: const Icon(LucideIcons.copy, color: Colors.white),
-                                      title: const Text('Copy post', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Post copied to clipboard'), behavior: SnackBarBehavior.floating),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                          child: const Icon(LucideIcons.share2, color: Colors.white38, size: 16),
                         ),
                       ],
                     ),

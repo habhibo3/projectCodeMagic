@@ -124,10 +124,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
         final users = snapshot.data!;
         final filteredUsers = _searchQuery.isEmpty
-            ? users
+            ? users.where((user) => user.role != 'admin').toList()
             : users.where((user) =>
-                user.displayName.toLowerCase().contains(_searchQuery) ||
-                user.email.toLowerCase().contains(_searchQuery)).toList();
+                user.role != 'admin' &&
+                (user.displayName.toLowerCase().contains(_searchQuery) ||
+                user.email.toLowerCase().contains(_searchQuery))).toList();
 
         return ListView.builder(
           padding: const EdgeInsets.all(32),

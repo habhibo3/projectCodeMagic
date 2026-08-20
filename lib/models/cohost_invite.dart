@@ -3,7 +3,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class CoHostInvite {
   final String id;
   final String contestId;
-  final String entryId;
+  final String? entryId; // null when organizer goes live without an entry
+  final String? stationId; // for station cohost invites
   final String channelId;
   final String hostUserId;
   final String hostName;
@@ -17,7 +18,8 @@ class CoHostInvite {
   const CoHostInvite({
     required this.id,
     required this.contestId,
-    required this.entryId,
+    required this.entryId, // null for Organizer Mode
+    this.stationId, // for station cohost invites
     required this.channelId,
     required this.hostUserId,
     required this.hostName,
@@ -35,7 +37,8 @@ class CoHostInvite {
     return CoHostInvite(
       id: doc.id,
       contestId: data['contestId'] ?? '',
-      entryId: data['entryId'] ?? '',
+      entryId: data['entryId'] as String?,  // null in Organizer Mode
+      stationId: data['stationId'] as String?, // for station cohost invites
       channelId: data['channelId'] ?? data['entryId'] ?? '',
       hostUserId: data['hostUserId'] ?? '',
       hostName: data['hostName'] ?? 'Host',

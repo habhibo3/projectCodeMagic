@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 // Stub implementation of AgoraWebService for non-web platforms.
 // Returns safe default/fallback values and contains no imports of web-only libraries.
@@ -38,4 +39,28 @@ class AgoraWebService {
       'uid': null,
     };
   }
+
+  static void setUserLeftCallback(Function(int) callback) {}
+
+  static void setScreenSharingStateCallback(Function(bool) callback) {}
+
+  // Recording stubs (no-op on non-web platforms)
+  static Future<bool> startWebRecording(
+    String filename, {
+    bool useBrowserCapture = true,
+  }) async => false;
+  static bool stopWebRecording() => false;
+  static bool isWebRecording() => false;
+  static Future<Uint8List?> getLatestWebRecordingBytes() async => null;
+  static void downloadLatestWebRecording() {}
+  static void releaseMediaDevices() {}
+
+  // Screen sharing stubs (no-op on non-web platforms)
+  static Future<Map<String, dynamic>> startWebScreenSharing() async {
+    return {'success': false, 'error': 'Not on web platform'};
+  }
+  static Future<Map<String, dynamic>> stopWebScreenSharing() async {
+    return {'success': false, 'error': 'Not on web platform'};
+  }
+  static bool isWebScreenSharing() => false;
 }

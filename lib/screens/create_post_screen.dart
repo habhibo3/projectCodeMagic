@@ -194,6 +194,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
                           // Upload video in background with progress tracking stored in engine
                           engine.uploadPostMedia(_mediaFile!, onProgress: (progress) {
+                            if (mounted) {
+                              setState(() => _uploadProgress = progress);
+                            }
                             engine.setUploadProgress(postId, progress);
                           }).then((url) async {
                             // Update post with actual video URL using the known postId
@@ -204,7 +207,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                             engine.clearUploadTask(postId);
                           });
                         } else {
-                          mediaUrl = await engine.uploadPostMedia(_mediaFile!);
+                          // For images, upload with progress tracking
+                          mediaUrl = await engine.uploadPostMedia(_mediaFile!, onProgress: (progress) {
+                            if (mounted) {
+                              setState(() => _uploadProgress = progress);
+                            }
+                          });
                           await engine.createPost(
                             type: _selectedType,
                             contentUrl: mediaUrl,
@@ -330,7 +338,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 // 3. Media Preview Box (Only if type is image/video)
                 if (_selectedType != 'text') ...[
                   GestureDetector(
-                    onTap: _pickMedia,
+                    onTap: _isUploading ? null : _pickMedia,
                     child: Container(
                       width: double.infinity,
                       height: 240,
@@ -374,6 +382,31 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                                             ),
                                           ),
                                         ),
+                                  // Upload progress overlay
+                                  if (_isUploading)
+                                    Container(
+                                      color: Colors.black.withValues(alpha: 0.7),
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const SizedBox(
+                                            width: 48,
+                                            height: 48,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 3,
+                                              valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            _uploadProgress > 0 && _uploadProgress < 1.0
+                                                ? 'Uploading... ${(_uploadProgress * 100).toInt()}%'
+                                                : 'Uploading...',
+                                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   Positioned(
                                     top: 12,
                                     right: 12,
@@ -381,7 +414,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                                       backgroundColor: Colors.black54,
                                       child: IconButton(
                                         icon: const Icon(LucideIcons.x, color: Colors.white),
-                                        onPressed: () => setState(() => _mediaFile = null),
+                                        onPressed: _isUploading ? null : () => setState(() => _mediaFile = null),
                                       ),
                                     ),
                                   ),

@@ -10,7 +10,8 @@ plugins {
 
 android {
     namespace = "com.contestlive.contest_live"
-    compileSdk = flutter.compileSdkVersion
+    // LiveKit's Android dependencies require Android API 36.
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     compileOptions {

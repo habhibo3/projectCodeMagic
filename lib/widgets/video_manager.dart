@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -194,6 +195,16 @@ class VideoManager {
 
   Future<VideoPlayerController> _createControllerActual(String videoUrl, {required bool isLocal}) async {
     VideoPlayerController controller;
+    // The cache manager resolves downloads to dart:io File objects. Those APIs
+    // are unavailable in a browser, where a network controller is the correct
+    // way to load remote recordings (including older .webm recordings).
+    if (kIsWeb) {
+      controller = VideoPlayerController.networkUrl(Uri.parse(videoUrl));
+      _activeControllers[videoUrl] =
+          _CachedController(controller: controller, refCount: 1);
+      return controller;
+    }
+
     if (isLocal) {
       final playableFile = await _getPlayableFile(File(videoUrl));
       controller = VideoPlayerController.file(playableFile);
@@ -233,7 +244,7 @@ class VideoManager {
 
   /// Pre-caches a video URL asynchronously using DefaultCacheManager with deduplication
   void preCacheVideo(String videoUrl) {
-    if (!videoUrl.startsWith('http')) return;
+    if (kIsWeb || !videoUrl.startsWith('http')) return;
     if (_cachedFilePaths.containsKey(videoUrl)) return; // Already resolved in memory cache!
     if (_preCachingUrls.contains(videoUrl)) return; // Already downloading or checking!
 
@@ -274,6 +285,7 @@ class VideoManager {
       _initializationFutures.remove(controller);
     }).catchError((e) {
       _initializationFutures.remove(controller);
+      debugPrint('VideoManager initialization error for $videoUrl: $e');
       throw e;
     });
     _initializationFutures[controller] = future;
@@ -293,6 +305,10 @@ class VideoManager {
     final cached = _activeControllers[videoUrl]!;
     cached.refCount--;
     debugPrint('VideoManager.releaseController: url=$videoUrl refCount decremented to ${cached.refCount}');
+
+    if (cached.controller.value.isPlaying) {
+      cached.controller.pause();
+    }
 
     if (cached.refCount <= 0) {
       _activeControllers.remove(videoUrl);

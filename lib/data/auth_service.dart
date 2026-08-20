@@ -17,11 +17,24 @@ class AuthService {
 
   String? get currentUserId => _auth.currentUser?.uid;
 
-  /// Signs up a new user with Email, Password, Display Name, and Location details.
+  /// Checks if a username is already registered in Firestore.
+  Future<bool> isUsernameTaken(String username) async {
+    final cleanUsername = username.trim().toLowerCase();
+    if (cleanUsername.isEmpty) return false;
+    final query = await FirebaseFirestore.instance
+        .collection('users')
+        .where('username', isEqualTo: cleanUsername)
+        .limit(1)
+        .get();
+    return query.docs.isNotEmpty;
+  }
+
+  /// Signs up a new user with Email, Password, Display Name, Username, and Location details.
   Future<UserCredential> signUp({
     required String email,
     required String password,
     required String displayName,
+    required String username,
     required String zip,
     required String city,
     required String state,
@@ -40,6 +53,7 @@ class AuthService {
         final ref = FirebaseFirestore.instance.collection('users').doc(uid);
         await ref.set({
           'displayName': displayName.trim(),
+          'username': username.trim().toLowerCase(),
           'email': email.trim(),
           'photoURL': '',
           'role': 'contestant',
@@ -68,10 +82,37 @@ class AuthService {
     required String password,
   }) async {
     try {
-      return await _auth.signInWithEmailAndPassword(
+      debugPrint('[AuthService] Email/Password Sign-In - Email: ${email.trim()}');
+      final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+
+      final uid = credential.user?.uid;
+      debugPrint('[AuthService] Email/Password Sign-In - UID: $uid');
+      debugPrint('[AuthService] Email/Password Sign-In - Email from Firebase Auth: ${credential.user?.email}');
+
+      if (uid != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        debugPrint('[AuthService] User document exists: ${userDoc.exists}');
+        if (userDoc.exists) {
+          debugPrint('[AuthService] Current email in Firestore: ${userDoc.data()?['email']}');
+        }
+
+        // Update email for existing users who might not have it
+        final userData = {
+          'email': credential.user?.email ?? '',
+        };
+
+        debugPrint('[AuthService] Updating Firestore with email: ${userData['email']}');
+
+        if (userDoc.exists) {
+          await FirebaseFirestore.instance.collection('users').doc(uid).update(userData);
+          debugPrint('[AuthService] Updated user document with email');
+        }
+      }
+
+      return credential;
     } catch (e) {
       debugPrint('AuthService signIn error: $e');
       rethrow;
@@ -141,13 +182,43 @@ class AuthService {
       final userCredential = await _auth.signInWithCredential(credential);
       final uid = userCredential.user?.uid;
 
+      debugPrint('[AuthService] Google Sign-In - UID: $uid');
+      debugPrint('[AuthService] Google Sign-In - Email from Firebase Auth: ${userCredential.user?.email}');
+      debugPrint('[AuthService] Google Sign-In - Display Name: ${userCredential.user?.displayName}');
+
       if (uid != null) {
         final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        debugPrint('[AuthService] User document exists: ${userDoc.exists}');
+        if (userDoc.exists) {
+          debugPrint('[AuthService] Current email in Firestore: ${userDoc.data()?['email']}');
+        }
+
+        final userData = {
+          'displayName': userCredential.user?.displayName ?? '',
+          'email': userCredential.user?.email ?? '',
+          'photoURL': userCredential.user?.photoURL ?? '',
+        };
+
+        debugPrint('[AuthService] Updating Firestore with email: ${userData['email']}');
+
         if (!userDoc.exists) {
+          // Generate a unique username based on display name or email prefix
+          String baseName = (userCredential.user?.displayName ?? '').replaceAll(RegExp(r'\s+'), '').toLowerCase();
+          if (baseName.isEmpty && userCredential.user?.email != null) {
+            baseName = userCredential.user!.email!.split('@').first.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+          }
+          if (baseName.isEmpty) baseName = 'user';
+          
+          String username = baseName;
+          int suffix = 1;
+          while (await isUsernameTaken(username)) {
+            username = '$baseName$suffix';
+            suffix++;
+          }
+
           await FirebaseFirestore.instance.collection('users').doc(uid).set({
-            'displayName': userCredential.user?.displayName ?? '',
-            'email': userCredential.user?.email ?? '',
-            'photoURL': userCredential.user?.photoURL ?? '',
+            ...userData,
+            'username': username,
             'role': 'contestant',
             'country': 'Global',
             'countryFlag': '🌍',
@@ -160,6 +231,11 @@ class AuthService {
             'state': '',
             'location': '',
           });
+          debugPrint('[AuthService] Created new user document with username: $username');
+        } else {
+          // Update email for existing users who might not have it
+          await FirebaseFirestore.instance.collection('users').doc(uid).update(userData);
+          debugPrint('[AuthService] Updated existing user document');
         }
       }
 

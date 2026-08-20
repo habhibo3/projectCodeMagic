@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../data/admin_service.dart';
@@ -18,16 +20,41 @@ class _AdminModerationScreenState extends State<AdminModerationScreen>
   final AdminService _adminService = AdminService();
   final FirebaseService _firebaseService = FirebaseService();
   late TabController _tabController;
+  StreamSubscription<List<PostModel>>? _postsSubscription;
+  StreamSubscription<List<ContestModel>>? _contestsSubscription;
+  List<PostModel> _posts = [];
+  List<ContestModel> _contests = [];
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadData();
+  }
+
+  void _loadData() {
+    _postsSubscription = _firebaseService.getAllPosts().listen((posts) {
+      if (mounted) {
+        setState(() {
+          _posts = posts;
+        });
+      }
+    });
+
+    _contestsSubscription = _firebaseService.getContests().listen((contests) {
+      if (mounted) {
+        setState(() {
+          _contests = contests;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _postsSubscription?.cancel();
+    _contestsSubscription?.cancel();
     super.dispose();
   }
 
@@ -105,84 +132,64 @@ class _AdminModerationScreenState extends State<AdminModerationScreen>
   }
 
   Widget _buildPostsList() {
-    return StreamBuilder<List<PostModel>>(
-      stream: _firebaseService.getAllPosts(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-        }
+    if (_posts.isEmpty) {
+      return const Center(
+        child: Text(
+          'No posts found',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
 
-        if (!snapshot.hasData || snapshot.data!.isEmpty) {
-          return const Center(
-            child: Text(
-              'No posts found',
-              style: TextStyle(color: Colors.white54),
-            ),
-          );
-        }
-
-        final posts = snapshot.data!;
-        return ListView.builder(
-          padding: const EdgeInsets.all(32),
-          itemCount: posts.length,
-          itemBuilder: (context, index) {
-            final post = posts[index];
-            return _buildPostCard(post);
-          },
-        );
+    return ListView.builder(
+      padding: const EdgeInsets.all(32),
+      itemCount: _posts.length,
+      itemBuilder: (context, index) {
+        final post = _posts[index];
+        return _buildPostCard(post);
       },
     );
   }
 
   Widget _buildEntriesList() {
-    return StreamBuilder<List<ContestModel>>(
-      stream: _firebaseService.getContests(),
-      builder: (context, contestsSnapshot) {
-        if (contestsSnapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-        }
+    if (_contests.isEmpty) {
+      return const Center(
+        child: Text(
+          'No contests found',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
 
-        if (!contestsSnapshot.hasData || contestsSnapshot.data!.isEmpty) {
-          return const Center(
-            child: Text(
-              'No contests found',
-              style: TextStyle(color: Colors.white54),
-            ),
-          );
-        }
+    return ListView.builder(
+      padding: const EdgeInsets.all(32),
+      itemCount: _contests.length,
+      itemBuilder: (context, contestIndex) {
+        final contest = _contests[contestIndex];
+        return StreamBuilder<List<ContestEntry>>(
+          stream: _firebaseService.getEntries(contest.id),
+          builder: (context, entriesSnapshot) {
+            if (!entriesSnapshot.hasData || entriesSnapshot.data!.isEmpty) {
+              return const SizedBox.shrink();
+            }
 
-        final contests = contestsSnapshot.data!;
-        return ListView.builder(
-          padding: const EdgeInsets.all(32),
-          itemCount: contests.length,
-          itemBuilder: (context, contestIndex) {
-            final contest = contests[contestIndex];
-            return StreamBuilder<List<ContestEntry>>(
-              stream: _firebaseService.getEntries(contest.id),
-              builder: (context, entriesSnapshot) {
-                if (!entriesSnapshot.hasData || entriesSnapshot.data!.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-
-                final entries = entriesSnapshot.data!;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        contest.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+            final entries = entriesSnapshot.data!;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    contest.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
-                    ...entries.map((entry) => _buildEntryCard(entry, contest.id)),
-                  ],
-                );
-              },
+                  ),
+                ),
+                ...entries.map((entry) => _buildEntryCard(entry, contest.id)),
+              ],
             );
           },
         );

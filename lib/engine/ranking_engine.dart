@@ -28,9 +28,16 @@ class VoteActivity {
 }
 
 class RankingEngine extends ChangeNotifier {
+  bool _isDisposed = false;
   final FirebaseService _firebaseService = FirebaseService();
   final LiveSessionService _liveSessionService = LiveSessionService();
   final String currentUserId;
+
+  void _safeNotifyListeners() {
+    if (!_isDisposed) {
+      notifyListeners();
+    }
+  }
 
   List<ContestModel> _contests = [];
   List<ContestEntry> _entries = [];
@@ -58,7 +65,7 @@ class RankingEngine extends ChangeNotifier {
     if (_isLoadingFeed || !_hasMoreFeed) return;
 
     _isLoadingFeed = true;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       const limit = 10;
@@ -93,7 +100,7 @@ class RankingEngine extends ChangeNotifier {
       debugPrint('Error fetching next feed page: $e');
     } finally {
       _isLoadingFeed = false;
-      notifyListeners();
+      if (!_isDisposed) _safeNotifyListeners();
     }
   }
 
@@ -101,24 +108,24 @@ class RankingEngine extends ChangeNotifier {
     _feedPosts.clear();
     _hasMoreFeed = true;
     _lastFeedDocument = null;
-    notifyListeners();
+    _safeNotifyListeners();
     await fetchNextFeedPage();
   }
 
   void setLocalVideoPath(String postId, String path) {
     _localVideoPaths[postId] = path;
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   void setUploadProgress(String postId, double progress) {
     _uploadProgressMap[postId] = progress;
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   void clearUploadTask(String postId) {
     _localVideoPaths.remove(postId);
     _uploadProgressMap.remove(postId);
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   StreamSubscription? _contestsSub;
@@ -151,10 +158,8 @@ class RankingEngine extends ChangeNotifier {
 
   void _listenToContests() {
     _contestsSub = _firebaseService.getContests().listen((fetchedContests) {
-      if (fetchedContests.isNotEmpty) {
-        _contests = fetchedContests;
-        notifyListeners();
-      }
+      _contests = fetchedContests;
+      _safeNotifyListeners();
     });
   }
 
@@ -165,7 +170,7 @@ class RankingEngine extends ChangeNotifier {
 
     _entriesSub = _firebaseService.getEntries(contestId).listen((fetchedEntries) {
       _entries = fetchedEntries;
-      notifyListeners();
+      _safeNotifyListeners();
     });
   }
 
@@ -177,7 +182,7 @@ class RankingEngine extends ChangeNotifier {
     _userSub?.cancel();
     _userSub = _firebaseService.getUserProfile(currentUserId).listen((profile) {
       _currentUserProfile = profile;
-      notifyListeners();
+      _safeNotifyListeners();
       if (profile != null && _currentContestId != null && _lastViewedEntryId != null) {
         trackEntryView(_lastViewedEntryId!);
       }
@@ -186,12 +191,15 @@ class RankingEngine extends ChangeNotifier {
     _followedSub?.cancel();
     _followedSub = _firebaseService.getFollowedContests(currentUserId).listen((ids) {
       _followedContestIds = ids;
-      notifyListeners();
+      _safeNotifyListeners();
     });
   }
 
   Future<bool> addVote(String entryId) async {
     if (_currentContestId != null) {
+      if (isCurrentStation) {
+        return _firebaseService.addStationVote(_currentContestId!, currentUserId);
+      }
       final success =
           await _firebaseService.addVote(_currentContestId!, entryId, currentUserId);
 
@@ -205,7 +213,7 @@ class RankingEngine extends ChangeNotifier {
           time: DateTime.now(),
         ));
         if (_voteActivity.length > 20) _voteActivity.removeLast();
-        notifyListeners();
+        _safeNotifyListeners();
 
         // 1. Schedule client-mediated sliding window decrement
         final contestId = _currentContestId!;
@@ -318,6 +326,7 @@ class RankingEngine extends ChangeNotifier {
         _currentUserProfile = UserModel(
           uid: _currentUserProfile!.uid,
           displayName: _currentUserProfile!.displayName,
+          username: _currentUserProfile!.username,
           email: _currentUserProfile!.email,
           photoURL: downloadUrl,
           role: _currentUserProfile!.role,
@@ -332,7 +341,7 @@ class RankingEngine extends ChangeNotifier {
           state: _currentUserProfile!.state,
           location: _currentUserProfile!.location,
         );
-        notifyListeners();
+        _safeNotifyListeners();
       }
     }
   }
@@ -473,18 +482,40 @@ class RankingEngine extends ChangeNotifier {
     return _liveSessionService.watchLiveSession(_currentContestId!, entryId);
   }
 
+  bool get isCurrentStation {
+    if (_currentContestId == null) return false;
+    if (_currentContestId!.startsWith('station_')) return true;
+    return _contests.any((c) => c.id == _currentContestId && c.type == 'Station');
+  }
+
   Future<bool> sendCoHostInvite({
-    required String entryId,
+    required String? entryId, // null for Organizer Mode
     required String inviteeUserId,
     required String inviteeName,
     required String inviteeAvatar,
   }) async {
     if (_currentContestId == null) return false;
     final host = _currentUserProfile;
+    final channelId = entryId ?? _currentContestId!;
+
+    if (isCurrentStation) {
+      final id = await _liveSessionService.sendStationCoHostInvite(
+        stationId: _currentContestId!,
+        channelId: channelId,
+        hostUserId: currentUserId,
+        hostName: host?.displayName ?? 'Host',
+        hostAvatar: host?.photoURL ?? '',
+        inviteeUserId: inviteeUserId,
+        inviteeName: inviteeName,
+        inviteeAvatar: inviteeAvatar,
+      );
+      return id != null;
+    }
+
     final id = await _liveSessionService.sendCoHostInvite(
       contestId: _currentContestId!,
       entryId: entryId,
-      channelId: entryId,
+      channelId: channelId,
       hostUserId: currentUserId,
       hostName: host?.displayName ?? 'Organizer',
       hostAvatar: host?.photoURL ?? '',
@@ -496,6 +527,9 @@ class RankingEngine extends ChangeNotifier {
   }
 
   Future<bool> acceptCoHostInvite(CoHostInvite invite) {
+    if (invite.stationId != null && invite.stationId!.isNotEmpty) {
+      return _liveSessionService.acceptStationCoHostInvite(invite);
+    }
     return _liveSessionService.acceptCoHostInvite(invite);
   }
 
@@ -503,9 +537,31 @@ class RankingEngine extends ChangeNotifier {
     return _liveSessionService.declineCoHostInvite(inviteId);
   }
 
-  Future<void> endCoHostSession(String entryId, {String? inviteId}) {
+  Future<void> endCoHostSession(String? entryId, {String? inviteId}) {
     if (_currentContestId == null) return Future.value();
+    if (isCurrentStation) {
+      return _liveSessionService.endStationCoHostSession(
+        stationId: _currentContestId!,
+        inviteId: inviteId,
+      );
+    }
     return _liveSessionService.endCoHostSession(
+      contestId: _currentContestId!,
+      entryId: entryId, // null for Organizer Mode
+      inviteId: inviteId,
+    );
+  }
+
+  /// Co-host voluntarily leaves — keeps host's session live (status stays 'live').
+  Future<void> removeCoHostFromSession(String? entryId, {String? inviteId}) {
+    if (_currentContestId == null) return Future.value();
+    if (isCurrentStation) {
+      return _liveSessionService.endStationCoHostSession(
+        stationId: _currentContestId!,
+        inviteId: inviteId,
+      );
+    }
+    return _liveSessionService.removeCoHostFromSession(
       contestId: _currentContestId!,
       entryId: entryId,
       inviteId: inviteId,
@@ -520,6 +576,15 @@ class RankingEngine extends ChangeNotifier {
     required String channelId,
   }) async {
     if (_currentContestId == null) return;
+    if (isCurrentStation) {
+      return _liveSessionService.startStationSession(
+        stationId: _currentContestId!,
+        hostUserId: hostUserId,
+        hostName: hostName,
+        hostAvatar: hostAvatar,
+        channelId: channelId,
+      );
+    }
     return _liveSessionService.startHostSession(
       contestId: _currentContestId!,
       entryId: entryId,
@@ -531,18 +596,31 @@ class RankingEngine extends ChangeNotifier {
   }
 
   Future<void> updateSessionLayout({
-    required String entryId,
+    required String? entryId, // null for Organizer Mode
     required bool isSplitScreen,
     required String cameraView,
     required bool showChatInRightPanel,
+    bool isScreenShareFullScreen = false,
+    String? selectedEntryId,
   }) async {
     if (_currentContestId == null) return;
+    if (isCurrentStation) {
+      return _liveSessionService.updateStationSessionLayout(
+        stationId: _currentContestId!,
+        isSplitScreen: isSplitScreen,
+        cameraView: cameraView,
+        showChatInRightPanel: showChatInRightPanel,
+        isScreenShareFullScreen: isScreenShareFullScreen,
+      );
+    }
     return _liveSessionService.updateSessionLayout(
       contestId: _currentContestId!,
       entryId: entryId,
       isSplitScreen: isSplitScreen,
       cameraView: cameraView,
       showChatInRightPanel: showChatInRightPanel,
+      isScreenShareFullScreen: isScreenShareFullScreen,
+      selectedEntryId: selectedEntryId,
     );
   }
 
@@ -595,7 +673,7 @@ class RankingEngine extends ChangeNotifier {
 
     if (!_feedPosts.any((p) => p.id == postId)) {
       _feedPosts.insert(0, post);
-      notifyListeners();
+      _safeNotifyListeners();
     }
 
     return postId;
@@ -629,7 +707,7 @@ class RankingEngine extends ChangeNotifier {
 
     if (!_feedPosts.any((p) => p.id == postId)) {
       _feedPosts.insert(0, post);
-      notifyListeners();
+      _safeNotifyListeners();
     }
 
     // Publish join notification
@@ -648,7 +726,7 @@ class RankingEngine extends ChangeNotifier {
   Future<void> deletePost(String postId) async {
     await _firebaseService.deletePost(postId);
     _feedPosts.removeWhere((p) => p.id == postId);
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   Future<void> updatePost(String postId, {
@@ -675,7 +753,7 @@ class RankingEngine extends ChangeNotifier {
         visibilityScope: visibilityScope,
         location: location,
       );
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
@@ -706,7 +784,7 @@ class RankingEngine extends ChangeNotifier {
         updatedLikes.add(currentUserId);
       }
       _feedPosts[index] = post.copyWith(likes: updatedLikes);
-      notifyListeners();
+      _safeNotifyListeners();
     }
     await _firebaseService.toggleLikePost(postId, currentUserId);
   }
@@ -732,7 +810,7 @@ class RankingEngine extends ChangeNotifier {
       _feedPosts[index] = _feedPosts[index].copyWith(
         commentsCount: _feedPosts[index].commentsCount + 1,
       );
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
@@ -754,7 +832,7 @@ class RankingEngine extends ChangeNotifier {
   void toggleSimulation(bool isActive) {
     _isSimulationActive = isActive;
     _simulationTimer?.cancel();
-    notifyListeners();
+    _safeNotifyListeners();
 
     if (_isSimulationActive) {
       _simulationTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
@@ -804,6 +882,7 @@ class RankingEngine extends ChangeNotifier {
 
   @override
   void dispose() {
+    _isDisposed = true;
     _contestsSub?.cancel();
     _entriesSub?.cancel();
     _userSub?.cancel();

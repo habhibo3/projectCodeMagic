@@ -9,6 +9,7 @@ import '../models/review.dart';
 import '../models/user.dart';
 import '../models/post.dart';
 import '../models/notification.dart';
+import '../models/station.dart';
 import 'mock_data.dart';
 import '../utils/web_blob_reader.dart';
 import 'cache_service.dart';
@@ -57,6 +58,7 @@ class FirebaseService {
       
       final contests = snapshot.docs.map((doc) {
         final data = doc.data();
+        debugPrint('FirebaseService getContests: Contest ${doc.id} prizes from Firestore: ${data['prizes']}');
         return ContestModel(
           id: doc.id,
           title: data['title'] ?? '',
@@ -64,6 +66,7 @@ class FirebaseService {
           description: data['description'] ?? '',
           rules: data['rules'] ?? '',
           prize: data['prize'] ?? '',
+          prizes: List<Map<String, dynamic>>.from(data['prizes'] ?? []),
           schedule: data['schedule'] ?? '',
           image: data['image'] ?? '',
           category: data['category'] ?? '',
@@ -104,15 +107,36 @@ class FirebaseService {
         .doc(contestId)
         .collection('entries')
         .snapshots()
-        .map((snapshot) {
-      if (snapshot.docs.isEmpty) return [];
+        .asyncMap((snapshot) async {
+      if (snapshot.docs.isEmpty) return <ContestEntry>[];
 
-      final entries = snapshot.docs.map((doc) {
+      final entries = await Future.wait(snapshot.docs.map((doc) async {
         final data = doc.data();
 
-        // Provide fallback URLs to prevent NetworkImage crash
         final avatar = data['userAvatar']?.toString() ?? '';
-        final content = data['contentUrl']?.toString() ?? '';
+        var content = data['contentUrl']?.toString() ?? '';
+        final entryType = (data['type'] ?? 'image').toString().toLowerCase().trim();
+
+        // Entry may still say "processing" if the user joined before upload finished.
+        if (content.isEmpty || content == 'processing') {
+          try {
+            final postSnap = await _db!.collection('posts').doc(doc.id).get();
+            if (postSnap.exists) {
+              final postUrl = postSnap.data()?['contentUrl']?.toString() ?? '';
+              if (postUrl.isNotEmpty && postUrl != 'processing') {
+                content = postUrl;
+                // Keep entry in sync for other listeners/devices.
+                _db!
+                    .collection('contests')
+                    .doc(contestId)
+                    .collection('entries')
+                    .doc(doc.id)
+                    .update({'contentUrl': postUrl})
+                    .catchError((_) {});
+              }
+            }
+          } catch (_) {}
+        }
 
         final reviewCount = (data['reviewCount'] ?? 0) as int;
         final totalStars = (data['totalStars'] ?? 0) as int;
@@ -131,7 +155,7 @@ class FirebaseService {
           userAvatar: avatar.isEmpty ? 'https://i.pravatar.cc/150?u=99' : avatar,
           countryFlag: data['countryFlag'] ?? '🏠',
           contentUrl: content.isEmpty ? 'https://images.unsplash.com/photo-1516280440614-37939bbacd81' : content,
-          type: data['type'] ?? 'image',
+          type: entryType,
           caption: data['caption'] ?? '',
           totalVotes: data['totalVotes'] ?? 0,
           windowVotes: data['windowVotes'] ?? 0,
@@ -146,7 +170,7 @@ class FirebaseService {
           contestType: data['contestType'] ?? 'Official',
           contestId: data['contestId'] ?? contestId,
         );
-      }).toList();
+      }));
       
       // Sort locally to avoid Firebase composite index requirement
       entries.sort((a, b) {
@@ -167,6 +191,8 @@ class FirebaseService {
   Future<bool> addVote(String contestId, String entryId, String voterId) async {
     if (!_isInitialized || _db == null) return true; // Simulation success
 
+    debugPrint('[FirebaseService] addVote called - contestId: $contestId, entryId: $entryId, voterId: $voterId');
+
     final entryRef = _db!.collection('contests').doc(contestId).collection('entries').doc(entryId);
     final userRef = _db!.collection('users').doc(voterId);
     final voteRef = entryRef.collection('votes').doc(voterId);
@@ -175,8 +201,11 @@ class FirebaseService {
       final voteAttempt = await _db!.runTransaction((transaction) async {
         final voteSnap = await transaction.get(voteRef);
         
+        debugPrint('[FirebaseService] Transaction - voteSnap.exists: ${voteSnap.exists}, voterId: $voterId');
+        
         // Relational check: If voter document already exists, they already voted!
         if (voteSnap.exists) {
+          debugPrint('[FirebaseService] User already voted - returning false');
           return false; // Indicate double-voting limit hit
         }
 
@@ -187,16 +216,10 @@ class FirebaseService {
 
         if (!entrySnap.exists) return false;
 
-        // Prevent contest creator from voting on their own contest
-        if (contestSnap.exists) {
-          final creatorId = contestSnap.data()?['creatorId'] as String?;
-          if (creatorId == voterId) {
-            return false; // Creator cannot vote on their own contest
-          }
-        }
-
         final currentTotal = entrySnap.data()?['totalVotes'] ?? 0;
         final currentWindow = entrySnap.data()?['windowVotes'] ?? 0;
+        
+        debugPrint('[FirebaseService] Current votes - total: $currentTotal, window: $currentWindow');
 
         // Save vote log with voter geo (audience country, not performer country)
         final voterCountryFlag =
@@ -233,12 +256,48 @@ class FirebaseService {
           });
         }
 
+        debugPrint('[FirebaseService] Vote transaction successful - returning true');
         return true;
       });
 
+      debugPrint('[FirebaseService] Transaction result: $voteAttempt');
       return voteAttempt;
     } catch (e) {
-      debugPrint('Failed relational addVote transaction: $e');
+      debugPrint('[FirebaseService] Failed relational addVote transaction: $e');
+      return false;
+    }
+  }
+
+  /// Casts one vote for the current station broadcast. The count is stored on
+  /// the live session, not the station itself, so every new recording starts
+  /// from zero and keeps its own final vote total.
+  Future<bool> addStationVote(String stationId, String voterId) async {
+    if (!_isInitialized || _db == null) return true;
+
+    final normalizedId = StationModel.normalizeId(stationId);
+    final liveSessionRef = _db!
+        .collection('stations')
+        .doc(normalizedId)
+        .collection('live')
+        .doc('session');
+    final voteRef = liveSessionRef.collection('votes').doc(voterId);
+
+    try {
+      return await _db!.runTransaction((transaction) async {
+        final existingVote = await transaction.get(voteRef);
+        if (existingVote.exists) return false;
+
+        transaction.set(voteRef, {
+          'voterId': voterId,
+          'votedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.update(liveSessionRef, {
+          'totalVotes': FieldValue.increment(1),
+        });
+        return true;
+      });
+    } catch (error) {
+      debugPrint('[FirebaseService] addStationVote failed: $error');
       return false;
     }
   }
@@ -398,6 +457,7 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: _mockUserProfile!.uid,
           displayName: _mockUserProfile!.displayName,
+          username: _mockUserProfile!.username,
           email: _mockUserProfile!.email,
           photoURL: path,
           role: _mockUserProfile!.role,
@@ -496,11 +556,101 @@ class FirebaseService {
       return await ref.getDownloadURL();
     } catch (e) {
       debugPrint('Failed to upload post media to Firebase Storage: $e');
-      debugPrint('Falling back to local file path');
-      if (onProgress != null) {
-        onProgress(1.0);
-      }
+      rethrow;
+    }
+  }
+
+  Future<String> uploadStationRecording(
+    String stationId,
+    String creatorId,
+    File file, {
+    void Function(double progress)? onProgress,
+  }) async {
+    if (!_isInitialized || _db == null) {
+      debugPrint('Firebase not initialized, returning local path');
       return file.path;
+    }
+    try {
+      final isVideo = file.path.endsWith('.mp4') || file.path.endsWith('.mov') || file.path.endsWith('.avi');
+      final extension = isVideo ? 'mp4' : 'jpg';
+      final fileName = 'recording_${DateTime.now().millisecondsSinceEpoch}.$extension';
+      
+      // Use path: stations/{creatorId}/{stationId}/recordings/{fileName}
+      final ref = firebase_storage.FirebaseStorage.instance
+          .ref()
+          .child('stations')
+          .child(creatorId)
+          .child(stationId)
+          .child('recordings')
+          .child(fileName);
+      
+      final firebase_storage.UploadTask uploadTask;
+      if (kIsWeb) {
+        final bytes = await WebBlobReader.readBlobBytes(file.path);
+        final mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
+        uploadTask = ref.putData(bytes, firebase_storage.SettableMetadata(contentType: mimeType));
+      } else {
+        uploadTask = ref.putFile(file);
+      }
+      
+      if (onProgress != null) {
+        uploadTask.snapshotEvents.listen((event) {
+          if (event.totalBytes > 0) {
+            final progress = event.bytesTransferred / event.totalBytes;
+            onProgress(progress);
+          }
+        });
+      }
+      
+      await uploadTask;
+      final downloadUrl = await ref.getDownloadURL();
+      debugPrint('Station recording uploaded successfully: $downloadUrl');
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('Failed to upload station recording to Firebase Storage: $e');
+      // Return local path as fallback for testing
+      debugPrint('Using local path as fallback: ${file.path}');
+      return file.path;
+    }
+  }
+
+  Future<String> uploadStationRecordingBytes(
+    String stationId,
+    String creatorId,
+    Uint8List bytes, {
+    String extension = 'webm',
+    void Function(double progress)? onProgress,
+  }) async {
+    if (!_isInitialized || _db == null) {
+      debugPrint('Firebase not initialized');
+      return '';
+    }
+    try {
+      final fileName = 'recording_${DateTime.now().millisecondsSinceEpoch}.$extension';
+      final mimeType = extension == 'webm' ? 'video/webm' : 'video/mp4';
+      final ref = firebase_storage.FirebaseStorage.instance
+          .ref()
+          .child('stations')
+          .child(creatorId)
+          .child(stationId)
+          .child('recordings')
+          .child(fileName);
+
+      final uploadTask = ref.putData(bytes, firebase_storage.SettableMetadata(contentType: mimeType));
+      if (onProgress != null) {
+        uploadTask.snapshotEvents.listen((event) {
+          if (event.totalBytes > 0) {
+            onProgress(event.bytesTransferred / event.totalBytes);
+          }
+        });
+      }
+      await uploadTask;
+      final downloadUrl = await ref.getDownloadURL();
+      debugPrint('Station recording bytes uploaded successfully: $downloadUrl');
+      return downloadUrl;
+    } catch (e) {
+      debugPrint('Failed to upload station recording bytes: $e');
+      return '';
     }
   }
 
@@ -511,6 +661,7 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: _mockUserProfile!.uid,
           displayName: _mockUserProfile!.displayName,
+          username: _mockUserProfile!.username,
           email: _mockUserProfile!.email,
           photoURL: _mockUserProfile!.photoURL,
           role: _mockUserProfile!.role,
@@ -548,6 +699,7 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: _mockUserProfile!.uid,
           displayName: _mockUserProfile!.displayName,
+          username: _mockUserProfile!.username,
           email: _mockUserProfile!.email,
           photoURL: _mockUserProfile!.photoURL,
           role: _mockUserProfile!.role,
@@ -582,6 +734,7 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: _mockUserProfile!.uid,
           displayName: displayName,
+          username: _mockUserProfile!.username,
           email: _mockUserProfile!.email,
           photoURL: _mockUserProfile!.photoURL,
           role: _mockUserProfile!.role,
@@ -689,6 +842,7 @@ class FirebaseService {
         _mockUserProfile = UserModel(
           uid: userId,
           displayName: 'James USA',
+          username: 'james_usa',
           email: 'james@mlivecast.com',
           photoURL: '',
           role: 'contestant',
@@ -935,6 +1089,66 @@ class FirebaseService {
     }
   }
 
+  // Station reviews
+  Stream<List<ReviewModel>> getStationReviews(String stationId) {
+    if (!_isInitialized || _db == null) {
+      return Stream.value([]);
+    }
+
+    return _db!
+        .collection('stations')
+        .doc(stationId)
+        .collection('reviews')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) => ReviewModel.fromFirestore(doc)).toList();
+    });
+  }
+
+  Future<bool> addStationReview(String stationId, ReviewModel review) async {
+    if (!_isInitialized || _db == null) return true;
+
+    final stationRef = _db!.collection('stations').doc(stationId);
+    final reviewRef = stationRef.collection('reviews').doc(review.userId);
+
+    try {
+      final success = await _db!.runTransaction((transaction) async {
+        final reviewSnap = await transaction.get(reviewRef);
+        if (reviewSnap.exists) {
+          return false; // User already reviewed
+        }
+
+        final stationSnap = await transaction.get(stationRef);
+        if (!stationSnap.exists) return false;
+
+        final currentTotalStars = (stationSnap.data()?['totalStars'] ?? 0) as int;
+        final currentReviewCount = (stationSnap.data()?['reviewCount'] ?? 0) as int;
+
+        final newTotalStars = currentTotalStars + review.ratingStars;
+        final newReviewCount = currentReviewCount + 1;
+        final newAvgRating = newTotalStars / newReviewCount;
+
+        // Save review doc inside transaction
+        transaction.set(reviewRef, review.toMap());
+
+        // Update station doc with recalculated average rating
+        transaction.update(stationRef, {
+          'totalStars': newTotalStars,
+          'reviewCount': newReviewCount,
+          'rating': newAvgRating,
+        });
+        
+        return true;
+      });
+      
+      return success;
+    } catch (e) {
+      debugPrint('Failed to add station review transaction: $e');
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // DECREMENT WINDOW VOTE (10-Second Sliding Window)
   // -------------------------------------------------------------------------
@@ -1109,8 +1323,15 @@ class FirebaseService {
       return;
     }
     try {
+      final contestMap = contest.toMap();
+      debugPrint('FirebaseService: Creating contest with data: $contestMap');
+      debugPrint('FirebaseService: Prizes in contestMap: ${contestMap['prizes']}');
+      
       final contestRef = _db!.collection('contests').doc(contest.id);
-      await contestRef.set(contest.toMap());
+      
+      // First create the contest
+      await contestRef.set(contestMap);
+      debugPrint('FirebaseService: Contest created successfully with ID: ${contest.id}');
     } catch (e) {
       debugPrint('Error creating contest: $e');
       rethrow;
@@ -1584,5 +1805,187 @@ class FirebaseService {
     }
     final snap = await query.get();
     return snap.docs;
+  }
+
+  // -------------------------------------------------------------------------
+  // STATIONS
+  // -------------------------------------------------------------------------
+  Stream<List<StationModel>> getStations() {
+    if (!_isInitialized || _db == null) {
+      return Stream.value([]);
+    }
+
+    final cacheKey = 'stations';
+    final cached = _cache.get<List<StationModel>>(cacheKey);
+    
+    return _db!.collection('stations').snapshots().map((snapshot) {
+      if (snapshot.docs.isEmpty) return <StationModel>[];
+      
+      final stations = snapshot.docs.map((doc) {
+        return StationModel.fromFirestore(doc.data(), doc.id);
+      }).toList();
+      
+      // Cache with 5-minute TTL
+      _cache.set(cacheKey, stations, ttl: const Duration(minutes: 5));
+      return stations;
+    });
+  }
+
+  Future<void> createStation(StationModel station) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      final normalizedId = StationModel.normalizeId(station.id);
+      await _db!.collection('stations').doc(normalizedId).set(station.toMap());
+    } catch (e) {
+      debugPrint('Failed to create station: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateStation(String stationId, Map<String, dynamic> updates) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      await _db!.collection('stations').doc(StationModel.normalizeId(stationId)).update(updates);
+    } catch (e) {
+      debugPrint('Failed to update station: $e');
+    }
+  }
+
+  Future<void> deleteStation(String stationId) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      await _db!.collection('stations').doc(StationModel.normalizeId(stationId)).delete();
+    } catch (e) {
+      debugPrint('Failed to delete station: $e');
+    }
+  }
+
+  Stream<StationModel?> getStation(String stationId) {
+    if (!_isInitialized || _db == null) {
+      return Stream.value(null);
+    }
+
+    return _db!.collection('stations').doc(StationModel.normalizeId(stationId)).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return StationModel.fromFirestore(doc.data() as Map<String, dynamic>?, doc.id);
+    });
+  }
+
+  /// One-shot fetch of a [StationModel] by ID. Used when a co-host accepts an
+  /// invite and we need to build the ContestModel for navigation.
+  Future<StationModel?> getStationOnce(String stationId) async {
+    if (!_isInitialized || _db == null) return null;
+    try {
+      final doc = await _db!
+          .collection('stations')
+          .doc(StationModel.normalizeId(stationId))
+          .get();
+      if (!doc.exists) return null;
+      return StationModel.fromFirestore(doc.data() as Map<String, dynamic>?, doc.id);
+    } catch (e) {
+      debugPrint('[FirebaseService] getStationOnce error: $e');
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // RECORDED LIVES
+  // -------------------------------------------------------------------------
+  Stream<List<RecordedLiveModel>> getRecordedLives(String stationId) {
+    if (!_isInitialized || _db == null) {
+      return Stream.value([]);
+    }
+
+    return _db!
+        .collection('stations')
+        .doc(StationModel.normalizeId(stationId))
+        .collection('recorded_lives')
+        .orderBy('recordedAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.map((doc) {
+        return RecordedLiveModel.fromFirestore(doc.data() as Map<String, dynamic>?, doc.id);
+      }).toList();
+    });
+  }
+
+  Future<void> createRecordedLive(RecordedLiveModel recordedLive) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      await _db!
+          .collection('stations')
+          .doc(recordedLive.stationId)
+          .collection('recorded_lives')
+          .doc(recordedLive.id)
+          .set(recordedLive.toMap());
+    } catch (e) {
+      debugPrint('Failed to create recorded live: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteRecordedLive(String stationId, String recordedLiveId) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      await _db!
+          .collection('stations')
+          .doc(stationId)
+          .collection('recorded_lives')
+          .doc(recordedLiveId)
+          .delete();
+    } catch (e) {
+      debugPrint('Failed to delete recorded live: $e');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // STATION LIVE STATUS
+  // -------------------------------------------------------------------------
+  Future<void> setStationLiveStatus(String stationId, bool isLive, {String? channelId}) async {
+    if (!_isInitialized || _db == null) return;
+
+    try {
+      final normalizedId = StationModel.normalizeId(stationId);
+      final updates = <String, dynamic>{
+        'isLive': isLive,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      if (channelId != null) {
+        updates['currentLiveChannelId'] = StationModel.normalizeId(channelId);
+      } else if (!isLive) {
+        updates['currentLiveChannelId'] = FieldValue.delete();
+      }
+      
+      await _db!.collection('stations').doc(normalizedId).update(updates);
+    } catch (e) {
+      debugPrint('Failed to update station live status: $e');
+    }
+  }
+
+  Future<void> incrementStationViewerCount(String stationId) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _db!.collection('stations').doc(StationModel.normalizeId(stationId)).update({
+        'viewerCount': FieldValue.increment(1),
+      });
+    } catch (e) {
+      debugPrint('Failed to increment station viewer count: $e');
+    }
+  }
+
+  Future<void> decrementStationViewerCount(String stationId) async {
+    if (!_isInitialized || _db == null) return;
+    try {
+      await _db!.collection('stations').doc(StationModel.normalizeId(stationId)).update({
+        'viewerCount': FieldValue.increment(-1),
+      });
+    } catch (e) {
+      debugPrint('Failed to decrement station viewer count: $e');
+    }
   }
 }

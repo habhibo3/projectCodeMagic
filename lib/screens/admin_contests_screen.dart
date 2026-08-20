@@ -4,6 +4,8 @@ import '../data/admin_service.dart';
 import '../data/firebase_service.dart';
 import '../models/entry.dart';
 import '../theme/app_theme.dart';
+import '../widgets/media_content_preview.dart';
+import '../widgets/prize_management_widget.dart';
 
 class AdminContestsScreen extends StatefulWidget {
   const AdminContestsScreen({super.key});
@@ -171,20 +173,12 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
               if (contest.image.isNotEmpty)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    contest.image,
-                    width: 80,
+                  child: MediaContentPreview(
+                    type: contestCoverType(contest),
+                    contentUrl: contest.image,
                     height: 80,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(LucideIcons.trophy, color: AppTheme.primary),
-                    ),
+                    width: 80,
+                    autoPlayVideo: false,
                   ),
                 )
               else
@@ -233,6 +227,31 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
                         _buildStatChip(LucideIcons.heart, '${contest.totalVotes}'),
                         const SizedBox(width: 8),
                         _buildStatChip(LucideIcons.star, contest.rating.toStringAsFixed(1)),
+                        const SizedBox(width: 8),
+                        if (contest.countryFlag.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              children: [
+                                Text(
+                                  contest.countryFlag,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  contest.country,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ],
@@ -365,7 +384,7 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
             children: [
               _buildDetailRow('Description', contest.description),
               _buildDetailRow('Rules', contest.rules),
-              _buildDetailRow('Prize', contest.prize),
+              _buildDetailRow('Prizes', contest.prizes.isNotEmpty ? '${contest.prizes.length} prizes configured' : contest.prize),
               _buildDetailRow('Schedule', contest.schedule),
               _buildDetailRow('Category', contest.category),
               _buildDetailRow('Type', contest.type),
@@ -421,82 +440,101 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
     final prizeController = TextEditingController();
     final categoryController = TextEditingController();
     final typeController = TextEditingController(text: 'Public');
+    List<Map<String, dynamic>> prizes = [
+      {'id': 'default_1', 'rank': 1, 'amount': '\$200', 'type': 'gold', 'description': 'Cash prize'},
+      {'id': 'default_2', 'rank': 2, 'amount': '\$100', 'type': 'silver', 'description': 'Cash prize'},
+      {'id': 'default_3', 'rank': 3, 'amount': '\$50', 'type': 'bronze', 'description': 'Cash prize'},
+    ];
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF151515),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        title: const Text(
-          'Create Contest',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildTextField(titleController, 'Title'),
-              const SizedBox(height: 12),
-              _buildTextField(descriptionController, 'Description', maxLines: 3),
-              const SizedBox(height: 12),
-              _buildTextField(rulesController, 'Rules', maxLines: 3),
-              const SizedBox(height: 12),
-              _buildTextField(prizeController, 'Prize'),
-              const SizedBox(height: 12),
-              _buildTextField(categoryController, 'Category'),
-              const SizedBox(height: 12),
-              _buildTextField(typeController, 'Type (Public/Official)'),
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF151515),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.white.withOpacity(0.1)),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          title: const Text(
+            'Create Contest',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              if (titleController.text.isEmpty) return;
-              
-              final contest = ContestModel(
-                id: 'contest_${DateTime.now().millisecondsSinceEpoch}',
-                title: titleController.text,
-                subtitle: '',
-                description: descriptionController.text,
-                rules: rulesController.text,
-                prize: prizeController.text,
-                schedule: '',
-                image: '',
-                category: categoryController.text,
-                type: typeController.text,
-                participantCount: 0,
-                totalVotes: 0,
-                rating: 0,
-                reviewCount: 0,
-                endsIn: '30 days',
-              );
-              
-              await _adminService.updateContest(contest.id, contest.toMap());
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Contest created successfully'),
-                    backgroundColor: Colors.green,
+          content: SizedBox(
+            width: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildTextField(titleController, 'Title'),
+                  const SizedBox(height: 12),
+                  _buildTextField(descriptionController, 'Description', maxLines: 3),
+                  const SizedBox(height: 12),
+                  _buildTextField(rulesController, 'Rules', maxLines: 3),
+                  const SizedBox(height: 12),
+                  _buildTextField(categoryController, 'Category'),
+                  const SizedBox(height: 12),
+                  _buildTextField(typeController, 'Type (Public/Official)'),
+                  const SizedBox(height: 20),
+                  PrizeManagementWidget(
+                    initialPrizes: prizes,
+                    onPrizesChanged: (newPrizes) {
+                      setDialogState(() {
+                        prizes = newPrizes;
+                      });
+                    },
                   ),
-                );
-              }
-            },
-            child: const Text('Create'),
+                ],
+              ),
+            ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (titleController.text.isEmpty) return;
+                
+                final contest = ContestModel(
+                  id: 'contest_${DateTime.now().millisecondsSinceEpoch}',
+                  title: titleController.text,
+                  subtitle: '',
+                  description: descriptionController.text,
+                  rules: rulesController.text,
+                  prize: prizeController.text,
+                  prizes: prizes,
+                  schedule: '',
+                  image: '',
+                  category: categoryController.text,
+                  type: typeController.text,
+                  participantCount: 0,
+                  totalVotes: 0,
+                  rating: 0,
+                  reviewCount: 0,
+                  endsIn: '30 days',
+                );
+                
+                await _adminService.updateContest(contest.id, contest.toMap());
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Contest created successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -508,76 +546,90 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
     final prizeController = TextEditingController(text: contest.prize);
     final categoryController = TextEditingController(text: contest.category);
     final typeController = TextEditingController(text: contest.type);
+    List<Map<String, dynamic>> prizes = List.from(contest.prizes);
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF151515),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        title: const Text(
-          'Edit Contest',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildTextField(titleController, 'Title'),
-              const SizedBox(height: 12),
-              _buildTextField(descriptionController, 'Description', maxLines: 3),
-              const SizedBox(height: 12),
-              _buildTextField(rulesController, 'Rules', maxLines: 3),
-              const SizedBox(height: 12),
-              _buildTextField(prizeController, 'Prize'),
-              const SizedBox(height: 12),
-              _buildTextField(categoryController, 'Category'),
-              const SizedBox(height: 12),
-              _buildTextField(typeController, 'Type (Public/Official)'),
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF151515),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.white.withOpacity(0.1)),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          title: const Text(
+            'Edit Contest',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
-              foregroundColor: Colors.white,
+          content: SizedBox(
+            width: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildTextField(titleController, 'Title'),
+                  const SizedBox(height: 12),
+                  _buildTextField(descriptionController, 'Description', maxLines: 3),
+                  const SizedBox(height: 12),
+                  _buildTextField(rulesController, 'Rules', maxLines: 3),
+                  const SizedBox(height: 12),
+                  _buildTextField(categoryController, 'Category'),
+                  const SizedBox(height: 12),
+                  _buildTextField(typeController, 'Type (Public/Official)'),
+                  const SizedBox(height: 20),
+                  PrizeManagementWidget(
+                    initialPrizes: prizes,
+                    onPrizesChanged: (newPrizes) {
+                      setDialogState(() {
+                        prizes = newPrizes;
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
-            onPressed: () async {
-              final updatedContest = ContestModel(
-                id: contest.id,
-                title: titleController.text,
-                subtitle: contest.subtitle,
-                description: descriptionController.text,
-                rules: rulesController.text,
-                prize: prizeController.text,
-                schedule: contest.schedule,
-                image: contest.image,
-                category: categoryController.text,
-                type: typeController.text,
-                participantCount: contest.participantCount,
-                totalVotes: contest.totalVotes,
-                rating: contest.rating,
-                reviewCount: contest.reviewCount,
-                endsIn: contest.endsIn,
-                endDate: contest.endDate,
-                creatorId: contest.creatorId,
-                city: contest.city,
-                country: contest.country,
-                latitude: contest.latitude,
-                longitude: contest.longitude,
-                visibilityScope: contest.visibilityScope,
-              );
-              
-              await _adminService.updateContest(contest.id, updatedContest.toMap());
-              if (mounted) {
-                Navigator.pop(context);
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                final updatedContest = ContestModel(
+                  id: contest.id,
+                  title: titleController.text,
+                  subtitle: contest.subtitle,
+                  description: descriptionController.text,
+                  rules: rulesController.text,
+                  prize: prizeController.text,
+                  prizes: prizes,
+                  schedule: contest.schedule,
+                  image: contest.image,
+                  category: categoryController.text,
+                  type: typeController.text,
+                  participantCount: contest.participantCount,
+                  totalVotes: contest.totalVotes,
+                  rating: contest.rating,
+                  reviewCount: contest.reviewCount,
+                  endsIn: contest.endsIn,
+                  endDate: contest.endDate,
+                  creatorId: contest.creatorId,
+                  city: contest.city,
+                  country: contest.country,
+                  latitude: contest.latitude,
+                  longitude: contest.longitude,
+                  visibilityScope: contest.visibilityScope,
+                );
+                
+                await _adminService.updateContest(contest.id, updatedContest.toMap());
+                if (mounted) {
+                  Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Contest updated successfully'),
@@ -589,6 +641,7 @@ class _AdminContestsScreenState extends State<AdminContestsScreen> {
             child: const Text('Update'),
           ),
         ],
+      ),
       ),
     );
   }

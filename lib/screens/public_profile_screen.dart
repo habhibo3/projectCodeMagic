@@ -295,10 +295,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
           else if (post.type == 'image')
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
+                final engine = Provider.of<RankingEngine>(context, listen: false);
+                Navigator.of(context, rootNavigator: true).push(
                   MaterialPageRoute(
-                    builder: (_) => PostDetailScreen(postId: post.id),
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: engine,
+                      child: PostDetailScreen(postId: post.id, initialPost: post),
+                    ),
                   ),
                 );
               },
@@ -315,10 +318,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
             GestureDetector(
               onTap: () {
                 if (post.contentUrl == 'processing') return; // Don't navigate if processing
-                Navigator.push(
-                  context,
+                final engine = Provider.of<RankingEngine>(context, listen: false);
+                Navigator.of(context, rootNavigator: true).push(
                   MaterialPageRoute(
-                    builder: (_) => PostDetailScreen(postId: post.id),
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: engine,
+                      child: PostDetailScreen(postId: post.id, initialPost: post),
+                    ),
                   ),
                 );
               },
@@ -375,10 +381,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
-                    Navigator.push(
-                      context,
+                    final engine = Provider.of<RankingEngine>(context, listen: false);
+                    Navigator.of(context, rootNavigator: true).push(
                       MaterialPageRoute(
-                        builder: (_) => PostDetailScreen(postId: post.id),
+                        builder: (_) => ChangeNotifierProvider.value(
+                          value: engine,
+                          child: PostDetailScreen(postId: post.id, initialPost: post),
+                        ),
                       ),
                     );
                   },
@@ -504,6 +513,12 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
             );
           }
 
+          debugPrint('[PublicProfileScreen] User data received:');
+          debugPrint('[PublicProfileScreen] - UID: ${user.uid}');
+          debugPrint('[PublicProfileScreen] - Display Name: ${user.displayName}');
+          debugPrint('[PublicProfileScreen] - Email: ${user.email}');
+          debugPrint('[PublicProfileScreen] - Email is empty: ${user.email.isEmpty}');
+
           final isPremium = user.subscriptionLevel == 'premium';
 
           return SingleChildScrollView(
@@ -559,6 +574,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                         ),
                         textAlign: TextAlign.center,
                       ),
+                      const SizedBox(height: 6),
+                      if (user.email.isNotEmpty)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(LucideIcons.mail, color: Colors.white38, size: 13),
+                            const SizedBox(width: 4),
+                            Text(
+                              user.email,
+                              style: const TextStyle(color: Colors.white54, fontSize: 13),
+                            ),
+                          ],
+                        ),
                       const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,

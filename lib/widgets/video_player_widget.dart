@@ -15,6 +15,10 @@ class VideoPlayerWidget extends StatefulWidget {
   final bool autoPlay;
   final String? thumbnailUrl;
   final VoidCallback? onTap;
+  final double height;
+  final BoxFit fit;
+  final bool loadWhenVisible;
+  final bool forceAutoPlay; // Force immediate auto-play for single video contexts
 
   const VideoPlayerWidget({
     super.key,
@@ -23,6 +27,10 @@ class VideoPlayerWidget extends StatefulWidget {
     this.autoPlay = true, // Default to true for auto-play in feeds
     this.thumbnailUrl,
     this.onTap,
+    this.height = 240,
+    this.fit = BoxFit.cover,
+    this.loadWhenVisible = true,
+    this.forceAutoPlay = false,
   });
 
   @override
@@ -63,6 +71,13 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     VisibilityDetectorController.instance.updateInterval =
         const Duration(milliseconds: 50);
     VideoManager().activeVideoUrl.addListener(_onActiveVideoChanged);
+    
+    // Force auto-play for single video contexts
+    if (widget.forceAutoPlay) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        VideoManager().activeVideoUrl.value = widget.videoUrl;
+      });
+    }
   }
 
   @override
@@ -85,10 +100,13 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   void _onActiveVideoChanged() {
     if (!mounted) return;
+    final isCurrent = _route?.isCurrent ?? true;
+    if (!isCurrent) return;
+
     final activeUrl = VideoManager().activeVideoUrl.value;
     final isActive = activeUrl == widget.videoUrl;
 
-    if (_isVisible) {
+    if (_isVisible && (widget.loadWhenVisible || _isInitialized)) {
       if (_isInitialized && _controller != null) {
         if (isActive && widget.autoPlay) {
           _controller!.play();
@@ -164,8 +182,16 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       final activeUrl = VideoManager().activeVideoUrl.value;
       final isActive = activeUrl == widget.videoUrl;
       if (widget.autoPlay && _isVisible && isActive) {
-        controller.play();
-        VideoManager().pauseAllExcept(widget.videoUrl);
+        try {
+          controller.play();
+          VideoManager().pauseAllExcept(widget.videoUrl);
+        } catch (e) {
+          debugPrint('[VideoPlayerWidget] Error playing video: $e');
+          // Set error state for WebM files with bad metadata
+          setState(() {
+            _hasError = true;
+          });
+        }
       } else {
         controller.pause();
       }
@@ -191,7 +217,6 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     }
 
     // Release controller back to VideoManager's cache to free up decoding cycles and prevent crash
-    _controller?.pause();
     _releaseControllerOnly();
 
     if (mounted) {
@@ -204,6 +229,9 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   void _releaseControllerOnly() {
     if (_controller != null) {
+      if (_controller!.value.isPlaying) {
+        _controller!.pause();
+      }
       VideoManager().releaseController(widget.videoUrl);
       _controller = null;
     }
@@ -232,7 +260,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       return;
     }
 
-    if (visible) {
+    if (visible && widget.loadWhenVisible) {
       _initializeVideo();
     } else {
       _deinitializeVideo();
@@ -256,7 +284,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   Widget build(BuildContext context) {
     if (_hasError) {
       return Container(
-        height: 240,
+        height: widget.height,
         color: Colors.black,
         child: const Center(
           child: Column(
@@ -284,7 +312,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
           final showLoader = _isVisible && isActive && (!_isInitialized || _isInitializing);
 
           return Container(
-            height: 240,
+            height: widget.height,
             color: Colors.black,
             child: Stack(
               fit: StackFit.expand,
@@ -293,7 +321,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                 if ((_controller == null || !_isInitialized || showLoader) && widget.thumbnailUrl != null)
                   Image.network(
                     widget.thumbnailUrl!,
-                    fit: BoxFit.cover,
+                    fit: widget.fit,
                     errorBuilder: (_, __, ___) => Container(color: Colors.black),
                   ),
                 
@@ -307,20 +335,9 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                   )
                 else if (_controller != null && _isInitialized)
                   GestureDetector(
-                    onTap: () {
-                      if (widget.onTap != null) {
-                        widget.onTap!();
-                        return;
-                      }
-                      if (VideoManager().activeVideoUrl.value != widget.videoUrl) {
-                        VideoManager().activeVideoUrl.value = widget.videoUrl;
-                        return;
-                      }
-                      
-                      // Pause before navigating to full-screen
+                    onTap: widget.onTap ?? () {
                       _controller?.pause();
-                      Navigator.push(
-                        context,
+                      Navigator.of(context, rootNavigator: true).push(
                         MaterialPageRoute(
                           builder: (_) => FullScreenVideoPlayer(
                             videoUrl: widget.videoUrl,
@@ -328,7 +345,6 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                           ),
                         ),
                       ).then((_) {
-                        // When returning from full-screen, re-evaluate visibility
                         if (mounted && _isVisible && _isInitialized) {
                           if (widget.autoPlay) {
                             _controller?.play();
@@ -341,11 +357,18 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                       alignment: Alignment.center,
                       children: [
                         Positioned.fill(
-                          child: AspectRatio(
-                            aspectRatio: _controller!.value.aspectRatio > 0
-                                ? _controller!.value.aspectRatio
-                                : 16 / 9,
-                            child: VideoPlayer(_controller!),
+                          child: FittedBox(
+                            fit: widget.fit,
+                            clipBehavior: Clip.hardEdge,
+                            child: SizedBox(
+                              width: _controller!.value.size.width > 0
+                                  ? _controller!.value.size.width
+                                  : 16,
+                              height: _controller!.value.size.height > 0
+                                  ? _controller!.value.size.height
+                                  : 9,
+                              child: VideoPlayer(_controller!),
+                            ),
                           ),
                         ),
                         // Play button overlay when paused

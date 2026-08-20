@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Vote Standings — Mlivecast</title>
+  <meta name="description" content="Real-time live vote standings for Mlivecast contests">
+
+  <!-- Firebase JS SDK (same versions as existing index.html) -->
+  <script defer src="/__/firebase/12.14.0/firebase-app-compat.js"></script>
+  <script defer src="/__/firebase/12.14.0/firebase-firestore-compat.js"></script>
+  <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0A0A0A;
+      --bg-secondary: #111111;
+      --bg-card: #181818;
+      --text-primary: #FFFFFF;
+      --text-secondary: rgba(255,255,255,0.6);
+      --text-muted: rgba(255,255,255,0.35);
+      --accent-gold: #FFD700;
+      --accent-silver: #C0C0C0;
+      --accent-bronze: #CD7F32;
+      --accent-red: #FF3B3B;
+      --glow-gold: rgba(255,215,0,0.3);
+    }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Loading State ── */
+    #loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 20px;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 3px solid rgba(255,215,0,0.15);
+      border-top-color: var(--accent-gold);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #loading-text {
+      color: var(--text-secondary);
+      font-size: 14px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    /* ── Error State ── */
+    #error {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 16px;
+      text-align: center;
+      padding: 20px;
+    }
+    #error h2 { color: var(--accent-red); font-size: 20px; }
+    #error p { color: var(--text-secondary); font-size: 14px; max-width: 400px; }
+
+    /* ── Main Container ── */
+    #app {
+      display: none;
+      flex-direction: column;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-red);
+      color: white;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      padding: 5px 12px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      animation: pulse-badge 2s ease-in-out infinite;
+    }
+    .live-dot {
+      width: 6px; height: 6px;
+      background: white;
+      border-radius: 50%;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes pulse-badge {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,59,0.5); }
+      50% { box-shadow: 0 0 12px 4px rgba(255,59,59,0.3); }
+    }
+
+    .title-block {
+      text-align: center;
+      flex: 1;
+      min-width: 200px;
+    }
+    .title-block h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(18px, 3vw, 28px);
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, var(--accent-gold), #FFA500, var(--accent-gold));
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shimmer 3s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 200% center; } }
+
+    .title-block .contest-name {
+      font-size: clamp(12px, 1.8vw, 16px);
+      color: var(--text-secondary);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+
+    .total-votes-badge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid rgba(255,215,0,0.2);
+      border-radius: 12px;
+      padding: 10px 20px;
+    }
+    .total-votes-badge .label {
+      font-size: 9px;
+      color: var(--text-muted);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .total-votes-badge .count {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(22px, 3vw, 36px);
+      font-weight: 900;
+      color: var(--accent-gold);
+      line-height: 1.1;
+    }
+
+    /* ── Chart Container ── */
+    .chart-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.06);
+      padding: 24px 16px 16px;
+      overflow: hidden;
+    }
+
+    .chart-area {
+      flex: 1;
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 8px;
+      min-height: 300px;
+      scroll-behavior: smooth;
+    }
+    .chart-area::-webkit-scrollbar { height: 6px; }
+    .chart-area::-webkit-scrollbar-track { background: transparent; }
+    .chart-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+    /* ── Individual Bar ── */
+    .bar-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+      min-width: 52px;
+      max-width: 80px;
+      flex: 1;
+      transition: order 0.6s ease;
+    }
+
+    .vote-count {
+      font-family: 'Outfit', sans-serif;
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+      white-space: nowrap;
+    }
+
+    .bar {
+      width: 100%;
+      border-radius: 6px 6px 2px 2px;
+      position: relative;
+      transition: height 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+      min-height: 8px;
+      cursor: default;
+    }
+    .bar:hover {
+      filter: brightness(1.2);
+      transform: scaleX(1.05);
+    }
+
+    .rank-badge {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 900;
+      color: white;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    .rank-1 .rank-badge { background: var(--accent-gold); color: #1a1a1a; border-color: var(--accent-gold); box-shadow: 0 0 12px var(--glow-gold); }
+    .rank-2 .rank-badge { background: var(--accent-silver); color: #1a1a1a; border-color: var(--accent-silver); }
+    .rank-3 .rank-badge { background: var(--accent-bronze); color: #1a1a1a; border-color: var(--accent-bronze); }
+
+    /* Winner crown glow */
+    .rank-1 .bar {
+      box-shadow: 0 0 20px rgba(255,215,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    .contestant-name {
+      font-size: 9px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      text-align: center;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+
+    /* ── Bar Gradient Palette ── */
+    .bar-gradient-0  { background: linear-gradient(to top, #B8860B, #FFD700, #FFFACD); }
+    .bar-gradient-1  { background: linear-gradient(to top, #6B6B6B, #C0C0C0, #E8E8E8); }
+    .bar-gradient-2  { background: linear-gradient(to top, #8B4513, #CD7F32, #DEB887); }
+    .bar-gradient-3  { background: linear-gradient(to top, #1a3a8a, #3B82F6, #93C5FD); }
+    .bar-gradient-4  { background: linear-gradient(to top, #1a3a8a, #2563EB, #60A5FA); }
+    .bar-gradient-5  { background: linear-gradient(to top, #1e3a5f, #0EA5E9, #67E8F9); }
+    .bar-gradient-6  { background: linear-gradient(to top, #4c1d95, #8B5CF6, #C4B5FD); }
+    .bar-gradient-7  { background: linear-gradient(to top, #701a75, #D946EF, #F0ABFC); }
+    .bar-gradient-8  { background: linear-gradient(to top, #14532d, #22C55E, #86EFAC); }
+    .bar-gradient-9  { background: linear-gradient(to top, #713f12, #F59E0B, #FDE68A); }
+    .bar-gradient-10 { background: linear-gradient(to top, #7f1d1d, #EF4444, #FCA5A5); }
+    .bar-gradient-11 { background: linear-gradient(to top, #134e4a, #14B8A6, #99F6E4); }
+    .bar-gradient-12 { background: linear-gradient(to top, #4a044e, #EC4899, #F9A8D4); }
+    .bar-gradient-13 { background: linear-gradient(to top, #365314, #84CC16, #D9F99D); }
+    .bar-gradient-14 { background: linear-gradient(to top, #1e1b4b, #6366F1, #C7D2FE); }
+
+    /* ── Footer ── */
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 0 4px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .footer-msg {
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .footer-msg.left { color: var(--accent-gold); }
+    .footer-msg.right { color: #FF6B6B; }
+
+    /* ── No entries ── */
+    .no-entries {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 16px;
+    }
+    .no-entries .emoji { font-size: 48px; }
+
+    /* ── Animations ── */
+    @keyframes bar-grow {
+      from { height: 0 !important; opacity: 0; }
+      to { opacity: 1; }
+    }
+    .bar-animate-in .bar {
+      animation: bar-grow 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    /* Vote flash effect */
+    @keyframes vote-flash {
+      0% { box-shadow: 0 0 0 0 rgba(255,215,0,0.6); }
+      50% { box-shadow: 0 0 20px 8px rgba(255,215,0,0.3); }
+      100% { box-shadow: 0 0 0 0 rgba(255,215,0,0); }
+    }
+    .vote-changed .bar {
+      animation: vote-flash 0.6s ease-out;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      #app { padding: 12px; }
+      .header { justify-content: center; }
+      .chart-wrapper { padding: 16px 8px 12px; }
+      .bar-container { min-width: 40px; }
+      .vote-count { font-size: 10px; }
+      .contestant-name { font-size: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Loading -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading standings...</div>
+  </div>
+
+  <!-- Error -->
+  <div id="error">
+    <h2>⚠️ Could not load standings</h2>
+    <p id="error-msg">Please check the URL and try again.</p>
+  </div>
+
+  <!-- Main App -->
+  <div id="app">
+    <div class="header">
+      <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+      <div class="title-block">
+        <h1>✦ LIVE VOTE STANDINGS ✦</h1>
+        <div class="contest-name" id="contest-name">Loading contest...</div>
+      </div>
+      <div class="total-votes-badge">
+        <div class="label">Total Votes</div>
+        <div class="count" id="total-votes">0</div>
+      </div>
+    </div>
+
+    <div class="chart-wrapper">
+      <div class="chart-area" id="chart-area">
+        <div class="no-entries" id="no-entries">
+          <div class="emoji">📊</div>
+          <div>Waiting for entries...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="footer-msg left">🏆 Thank you for supporting creativity!</div>
+      <div class="footer-msg right">🔥 Top 1 entry will be the winner!</div>
+    </div>
+  </div>
+
+  <script>
+    // ── State ──
+    let previousVotes = {};  // entryId → vote count (for detecting changes)
+    let isFirstLoad = true;
+
+    // ── Parse URL params ──
+    function getContestId() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('contestId') || params.get('contest') || params.get('id');
+    }
+
+    function showError(msg) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      const errorEl = document.getElementById('error');
+      errorEl.style.display = 'flex';
+      document.getElementById('error-msg').textContent = msg;
+    }
+
+    function showApp() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+    }
+
+    // ── Format vote numbers ──
+    function formatVotes(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+      if (n >= 10000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+      if (n >= 1000) return n.toLocaleString();
+      return String(n);
+    }
+
+    // ── Bar gradient class by rank index ──
+    function getGradientClass(rankIndex) {
+      return 'bar-gradient-' + (rankIndex % 15);
+    }
+
+    // ── Render chart ──
+    function renderChart(entries) {
+      const chartArea = document.getElementById('chart-area');
+      const noEntries = document.getElementById('no-entries');
+      const totalVotesEl = document.getElementById('total-votes');
+
+      if (!entries || entries.length === 0) {
+        noEntries.style.display = 'flex';
+        totalVotesEl.textContent = '0';
+        return;
+      }
+      noEntries.style.display = 'none';
+
+      // Sort by totalVotes descending
+      const sorted = [...entries].sort((a, b) => b.totalVotes - a.totalVotes);
+      const maxVotes = Math.max(1, sorted[0].totalVotes);
+      const totalVotes = sorted.reduce((sum, e) => sum + e.totalVotes, 0);
+
+      totalVotesEl.textContent = formatVotes(totalVotes);
+
+      // Check which entries had vote changes
+      const changedIds = new Set();
+      sorted.forEach(entry => {
+        const prev = previousVotes[entry.id];
+        if (prev !== undefined && prev !== entry.totalVotes) {
+          changedIds.add(entry.id);
+        }
+        previousVotes[entry.id] = entry.totalVotes;
+      });
+
+      // Build or update bars
+      // Clear and rebuild for simplicity + correct ordering
+      const fragment = document.createDocumentFragment();
+
+      sorted.forEach((entry, index) => {
+        const rank = index + 1;
+        const heightPercent = Math.max(3, (entry.totalVotes / maxVotes) * 100);
+        const isChanged = changedIds.has(entry.id);
+
+        const container = document.createElement('div');
+        container.className = 'bar-container' + (isFirstLoad ? ' bar-animate-in' : '') + (isChanged ? ' vote-changed' : '');
+        container.style.order = rank;
+        if (isFirstLoad) {
+          container.style.animationDelay = (index * 0.05) + 's';
+        }
+
+        // Vote count label
+        const voteLabel = document.createElement('div');
+        voteLabel.className = 'vote-count';
+        voteLabel.textContent = formatVotes(entry.totalVotes);
+
+        // Bar
+        const bar = document.createElement('div');
+        bar.className = 'bar ' + getGradientClass(index) + (rank <= 3 ? ' rank-' + rank : '');
+        bar.style.height = heightPercent + '%';
+        bar.title = entry.userName + ' — ' + entry.totalVotes + ' votes';
+
+        // Rank badge
+        const badge = document.createElement('div');
+        badge.className = 'rank-badge';
+        if (rank === 1) badge.textContent = '👑';
+        else if (rank === 2) badge.textContent = '2';
+        else if (rank === 3) badge.textContent = '3';
+        else badge.textContent = rank;
+        bar.appendChild(badge);
+
+        // Contestant name
+        const nameEl = document.createElement('div');
+        nameEl.className = 'contestant-name';
+        nameEl.textContent = entry.userName || 'Contestant ' + rank;
+        nameEl.title = entry.userName;
+
+        container.appendChild(voteLabel);
+        container.appendChild(bar);
+        container.appendChild(nameEl);
+        fragment.appendChild(container);
+      });
+
+      // Clear old bars and insert new
+      const existingBars = chartArea.querySelectorAll('.bar-container');
+      existingBars.forEach(b => b.remove());
+      chartArea.appendChild(fragment);
+
+      isFirstLoad = false;
+
+      // Remove vote-changed class after animation
+      if (changedIds.size > 0) {
+        setTimeout(() => {
+          document.querySelectorAll('.vote-changed').forEach(el => el.classList.remove('vote-changed'));
+        }, 700);
+      }
+    }
+
+    // ── Initialize ──
+    document.addEventListener('DOMContentLoaded', function() {
+      const contestId = getContestId();
+
+      if (!contestId) {
+        showError('No contest ID specified. Use ?contestId=YOUR_CONTEST_ID in the URL.');
+        return;
+      }
+
+      // Wait for Firebase to initialize
+      const checkFirebase = setInterval(() => {
+        try {
+          const app = firebase.app();
+          clearInterval(checkFirebase);
+          initFirestore(contestId);
+        } catch (e) {
+          // Firebase not ready yet, keep waiting
+        }
+      }, 100);
+
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        clearInterval(checkFirebase);
+        if (document.getElementById('loading').style.display !== 'none') {
+          showError('Firebase failed to initialize. Please refresh the page.');
+        }
+      }, 10000);
+    });
+
+    function initFirestore(contestId) {
+      const db = firebase.firestore();
+
+      // Fetch contest title
+      db.collection('contests').doc(contestId).get().then(doc => {
+        if (doc.exists) {
+          const data = doc.data();
+          document.getElementById('contest-name').textContent = data.title || 'Contest';
+          document.title = (data.title || 'Contest') + ' — Live Vote Standings';
+        } else {
+          document.getElementById('contest-name').textContent = 'Contest: ' + contestId;
+        }
+      }).catch(err => {
+        console.warn('Could not fetch contest title:', err);
+        document.getElementById('contest-name').textContent = 'Contest: ' + contestId;
+      });
+
+      // Real-time listener on entries
+      db.collection('contests').doc(contestId).collection('entries')
+        .onSnapshot(snapshot => {
+          showApp();
+
+          const entries = [];
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            entries.push({
+              id: doc.id,
+              userName: data.userName || data.username || 'Unknown',
+              userAvatar: data.userAvatar || data.avatar || '',
+              totalVotes: data.totalVotes || 0,
+              countryFlag: data.countryFlag || '🌍',
+            });
+          });
+
+          renderChart(entries);
+        }, err => {
+          console.error('Firestore listener error:', err);
+          showError('Failed to load entries: ' + err.message);
+        });
+    }
+  </script>
+</body>
+</html>

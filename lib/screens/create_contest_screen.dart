@@ -7,7 +7,8 @@ import 'package:provider/provider.dart';
 import '../engine/ranking_engine.dart';
 import '../models/entry.dart';
 import '../theme/app_theme.dart';
-import '../widgets/avatar_helper.dart';
+import '../widgets/media_content_preview.dart';
+import '../widgets/prize_management_widget.dart';
 
 class CreateContestScreen extends StatefulWidget {
   const CreateContestScreen({super.key});
@@ -30,9 +31,15 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
   String _selectedCategory = 'Music';
   String _selectedType = 'Public';
   String _selectedVisibilityScope = 'global';
-  File? _coverImage;
+  File? _coverFile;
   bool _isCreating = false;
+  DateTime? _selectedStartDate;
   DateTime? _selectedEndDate;
+  List<Map<String, dynamic>> _prizes = [
+    {'id': 'default_1', 'rank': 1, 'amount': '\$200', 'type': 'gold', 'description': 'Cash prize'},
+    {'id': 'default_2', 'rank': 2, 'amount': '\$100', 'type': 'silver', 'description': 'Cash prize'},
+    {'id': 'default_3', 'rank': 3, 'amount': '\$50', 'type': 'bronze', 'description': 'Cash prize'},
+  ];
 
   final List<String> _categories = ['Music', 'Dance', 'Comedy', 'Art', 'Sports', 'Fashion', 'Photography', 'Gaming', 'Other'];
   final List<String> _types = ['Public', 'Official'];
@@ -52,12 +59,13 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
     super.dispose();
   }
 
-  Future<void> _pickCoverImage() async {
+  Future<void> _pickCoverMedia() async {
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-    if (picked != null) {
+
+    if (picked != null && mounted) {
       setState(() {
-        _coverImage = File(picked.path);
+        _coverFile = File(picked.path);
       });
     }
   }
@@ -112,16 +120,16 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
       return;
     }
 
-    if (_prizeController.text.trim().isEmpty) {
+    if (_prizes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter prize details'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('Please add at least one prize'), backgroundColor: Colors.redAccent),
       );
       return;
     }
 
-    if (_scheduleController.text.trim().isEmpty) {
+    if (_selectedStartDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter schedule details'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('Please select a start date'), backgroundColor: Colors.redAccent),
       );
       return;
     }
@@ -133,9 +141,16 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
       return;
     }
 
-    if (_coverImage == null) {
+    if (_selectedEndDate!.isBefore(_selectedStartDate!)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a cover image'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('End date must be after start date'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_coverFile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a cover photo or video'), backgroundColor: Colors.redAccent),
       );
       return;
     }
@@ -146,11 +161,16 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
       final engine = Provider.of<RankingEngine>(context, listen: false);
 
       String imageUrl = 'https://via.placeholder.com/400x200/1E1E1E/FFFFFF?text=Contest';
-      if (_coverImage != null) {
-        imageUrl = await engine.uploadPostMedia(_coverImage!);
+      if (_coverFile != null) {
+        imageUrl = await engine.uploadPostMedia(_coverFile!);
       }
 
       final contestId = 'contest_${DateTime.now().millisecondsSinceEpoch}';
+      
+      // Debug logging
+      debugPrint('Creating contest with prizes: $_prizes');
+      debugPrint('Prizes count: ${_prizes.length}');
+      
       final contest = ContestModel(
         id: contestId,
         title: _titleController.text.trim(),
@@ -158,7 +178,8 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
         description: _descriptionController.text.trim(),
         rules: _rulesController.text.trim(),
         prize: _prizeController.text.trim(),
-        schedule: _scheduleController.text.trim(),
+        prizes: _prizes,
+        schedule: '${_selectedStartDate!.day}/${_selectedStartDate!.month}/${_selectedStartDate!.year}',
         image: imageUrl,
         category: _selectedCategory,
         type: _selectedType,
@@ -173,6 +194,8 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
         country: _countryController.text.trim().isEmpty ? (profile?.country ?? 'Tunisia') : _countryController.text.trim(),
         visibilityScope: _selectedVisibilityScope,
       );
+      
+      debugPrint('Contest toMap prizes: ${contest.toMap()['prizes']}');
 
       await engine.createContest(contest);
 
@@ -217,14 +240,14 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cover Image
+            // Cover media
             const Text(
-              'COVER IMAGE',
+              'COVER (PHOTO OR VIDEO)',
               style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
             ),
             const SizedBox(height: 8),
             GestureDetector(
-              onTap: _pickCoverImage,
+              onTap: _pickCoverMedia,
               child: Container(
                 width: double.infinity,
                 height: 180,
@@ -233,24 +256,44 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.white12),
                 ),
-                child: _coverImage != null
+                child: _coverFile != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: kIsWeb
-                            ? Container(
-                                color: Colors.grey.shade900,
-                                child: const Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(LucideIcons.image, color: Colors.white30, size: 48),
-                                      SizedBox(height: 8),
-                                      Text('Cover image selected', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                                    ],
-                                  ),
-                                ),
+                            ? Image.network(
+                                _coverFile!.path,
+                                width: double.infinity,
+                                height: 180,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Container(
+                                    color: Colors.grey.shade900,
+                                    child: const Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            LucideIcons.image,
+                                            color: Colors.white30,
+                                            size: 48,
+                                          ),
+                                          SizedBox(height: 8),
+                                          Text(
+                                            'Failed to load image',
+                                            style: TextStyle(color: Colors.white54, fontSize: 12),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
                               )
-                            : Image.file(_coverImage!, fit: BoxFit.cover),
+                            : MediaContentPreview(
+                                type: 'image',
+                                contentUrl: _coverFile!.path,
+                                height: 180,
+                                autoPlayVideo: true,
+                              ),
                       )
                     : const Center(
                         child: Column(
@@ -259,7 +302,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                             Icon(LucideIcons.imagePlus, color: Colors.white30, size: 40),
                             SizedBox(height: 8),
                             Text(
-                              'Tap to add cover image',
+                              'Tap to add cover photo or video',
                               style: TextStyle(color: Colors.white30, fontSize: 12),
                             ),
                           ],
@@ -278,6 +321,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
             TextField(
               controller: _titleController,
               style: const TextStyle(color: Colors.white, fontSize: 14),
+              textDirection: TextDirection.ltr,
               decoration: InputDecoration(
                 hintText: 'e.g. Rock Vocal Challenge',
                 hintStyle: const TextStyle(color: Colors.white30),
@@ -300,6 +344,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
             TextField(
               controller: _subtitleController,
               style: const TextStyle(color: Colors.white, fontSize: 14),
+              textDirection: TextDirection.ltr,
               decoration: InputDecoration(
                 hintText: 'e.g. Battle of the best singers',
                 hintStyle: const TextStyle(color: Colors.white30),
@@ -323,6 +368,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
               controller: _descriptionController,
               maxLines: 4,
               style: const TextStyle(color: Colors.white, fontSize: 14),
+              textDirection: TextDirection.ltr,
               decoration: InputDecoration(
                 hintText: 'Describe your contest...',
                 hintStyle: const TextStyle(color: Colors.white30),
@@ -346,6 +392,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
               controller: _rulesController,
               maxLines: 3,
               style: const TextStyle(color: Colors.white, fontSize: 14),
+              textDirection: TextDirection.ltr,
               decoration: InputDecoration(
                 hintText: 'Contest rules and guidelines...',
                 hintStyle: const TextStyle(color: Colors.white30),
@@ -359,51 +406,63 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Prize
+            // Prize Management
+            PrizeManagementWidget(
+              initialPrizes: _prizes,
+              onPrizesChanged: (newPrizes) {
+                setState(() {
+                  _prizes = newPrizes;
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Start Date
             const Text(
-              'PRIZE',
+              'START DATE',
               style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _prizeController,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'e.g. \$500 Cash prize',
-                hintStyle: const TextStyle(color: Colors.white30),
-                filled: true,
-                fillColor: const Color(0xFF1E1E1E),
-                border: OutlineInputBorder(
+            GestureDetector(
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime.now(),
+                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                );
+                if (picked != null) {
+                  setState(() => _selectedStartDate = picked);
+                }
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E),
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.white12),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(LucideIcons.calendar, color: Colors.white54, size: 20),
+                    const SizedBox(width: 12),
+                    Text(
+                      _selectedStartDate != null
+                          ? '${_selectedStartDate!.day}/${_selectedStartDate!.month}/${_selectedStartDate!.year}'
+                          : 'Select start date',
+                      style: TextStyle(
+                        color: _selectedStartDate != null ? Colors.white : Colors.white30,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
 
-            // Schedule
-            const Text(
-              'SCHEDULE',
-              style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _scheduleController,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'e.g. Starts: June 1, Ends: June 30',
-                hintStyle: const TextStyle(color: Colors.white30),
-                filled: true,
-                fillColor: const Color(0xFF1E1E1E),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.white12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Ends In
+            // End Date
             const Text(
               'END DATE',
               style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.5),
@@ -413,8 +472,8 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
               onTap: () async {
                 final picked = await showDatePicker(
                   context: context,
-                  initialDate: DateTime.now().add(const Duration(days: 30)),
-                  firstDate: DateTime.now(),
+                  initialDate: _selectedStartDate?.add(const Duration(days: 30)) ?? DateTime.now().add(const Duration(days: 30)),
+                  firstDate: _selectedStartDate ?? DateTime.now(),
                   lastDate: DateTime.now().add(const Duration(days: 365)),
                 );
                 if (picked != null) {
@@ -460,6 +519,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                   child: TextField(
                     controller: _cityController,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
+                    textDirection: TextDirection.ltr,
                     decoration: InputDecoration(
                       hintText: 'City',
                       hintStyle: const TextStyle(color: Colors.white30),
@@ -477,6 +537,7 @@ class _CreateContestScreenState extends State<CreateContestScreen> {
                   child: TextField(
                     controller: _countryController,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
+                    textDirection: TextDirection.ltr,
                     decoration: InputDecoration(
                       hintText: 'Country',
                       hintStyle: const TextStyle(color: Colors.white30),

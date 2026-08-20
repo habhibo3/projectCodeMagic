@@ -7,7 +7,9 @@ import '../models/entry.dart';
 import '../models/comment.dart';
 import '../models/review.dart';
 import '../theme/app_theme.dart';
-import 'live_stream_screen.dart';
+import '../widgets/media_content_preview.dart';
+import '../widgets/enter_live_button.dart';
+import '../widgets/full_screen_video_player.dart';
 
 class EntryPostScreen extends StatefulWidget {
   final ContestEntry initialEntry;
@@ -115,58 +117,68 @@ class _EntryPostScreenState extends State<EntryPostScreen> {
     );
   }
 
+  bool _isLocalVideoUrl(String url) =>
+      url.isNotEmpty && !url.startsWith('http') && url != 'processing';
+
+  void _openFullScreenVideo(ContestEntry entry) {
+    if (entry.type != 'video' || entry.contentUrl.isEmpty || entry.contentUrl == 'processing') {
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => FullScreenVideoPlayer(
+          videoUrl: entry.contentUrl,
+          isLocal: _isLocalVideoUrl(entry.contentUrl),
+        ),
+      ),
+    );
+  }
+
   Widget _buildContent(ContestEntry entry, int rank) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => LiveStreamScreen(
-              isHost: false,
-              contest: widget.contest,
-              entryId: entry.id,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Stack(
+          children: [
+            MediaContentPreview(
+              type: entry.type,
+              contentUrl: entry.contentUrl,
+              height: 280,
+              videoThumbnailMode: false,
+              autoPlayVideo: true,
+              forceAutoPlay: true,
             ),
-          ),
-        );
-      },
-      child: Stack(
-        children: [
-          Image.network(
-            entry.contentUrl,
-            width: double.infinity,
-            height: 240,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Container(
-              height: 240,
-              color: Colors.grey.shade900,
-              child: const Icon(LucideIcons.image, size: 60, color: Colors.grey),
-            ),
-          ),
-          Positioned.fill(
-            child: Center(
+            Positioned(
+              top: 12,
+              left: 12,
               child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle),
-                child: const Icon(LucideIcons.play, color: Colors.white, size: 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(color: AppTheme.primary, borderRadius: BorderRadius.circular(6)),
+                child: Text(
+                  'RANK #$rank',
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
-          ),
-          Positioned(
-            top: 12,
-            left: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(4)),
-              child: const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+            Positioned(
+              top: 12,
+              right: 12,
+              child: MediaTypeBadge(type: entry.type),
             ),
+          ],
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          decoration: const BoxDecoration(
+            color: Color(0xFF111111),
+            border: Border(bottom: BorderSide(color: Colors.white12)),
           ),
-          Positioned(
-            bottom: 12,
-            right: 12,
-            child: const Icon(LucideIcons.maximize, color: Colors.white, size: 20),
+          child: EnterLiveButton(
+            contest: widget.contest,
+            entryId: entry.id,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -189,14 +201,45 @@ class _EntryPostScreenState extends State<EntryPostScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(entry.caption,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, height: 1.3)),
+              CircleAvatar(
+                radius: 20,
+                backgroundImage: entry.userAvatar.isNotEmpty
+                    ? NetworkImage(entry.userAvatar)
+                    : null,
+                child: entry.userAvatar.isEmpty
+                    ? Text(
+                        entry.userName[0].toUpperCase(),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.userName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    '${entry.countryFlag} ${entry.city}, ${entry.country}',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          Text(entry.caption,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, height: 1.3)),
           const SizedBox(height: 8),
           Row(
             children: [

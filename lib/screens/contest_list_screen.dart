@@ -9,6 +9,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../data/auth_service.dart';
 import '../data/locale_country.dart';
+import '../data/live_session_service.dart';
 import '../engine/ranking_engine.dart';
 import '../models/entry.dart';
 import '../models/post.dart';
@@ -17,6 +18,7 @@ import '../models/notification.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
 import '../widgets/video_player_widget.dart';
+import '../widgets/media_content_preview.dart';
 import 'contest_detail_screen.dart';
 import 'create_post_screen.dart';
 import 'create_contest_screen.dart';
@@ -25,27 +27,39 @@ import 'post_detail_screen.dart';
 import 'public_profile_screen.dart';
 import 'feed_screen.dart';
 import 'edit_post_screen.dart';
+import 'station_list_screen.dart';
 import 'subscription_upgrade_screen.dart';
+import 'live_stream_screen.dart';
 
 // ---------------------------------------------------------------------------
 // ROOT SHELL — holds the persistent BottomNavigationBar + nested Navigator
 // ---------------------------------------------------------------------------
 class ContestListScreen extends StatefulWidget {
-  const ContestListScreen({super.key, this.onWebNavChange, this.webNavNotifier});
+  const ContestListScreen({
+    super.key,
+    this.onWebNavChange,
+    this.webNavNotifier,
+    this.webCategoryNotifier,
+    this.webSearchNotifier,
+  });
 
+  static final GlobalKey<NavigatorState> stationNavKey = GlobalKey<NavigatorState>();
   static final GlobalKey<NavigatorState> homeNavKey = GlobalKey<NavigatorState>();
   final Function(int)? onWebNavChange;
   final ValueNotifier<int?>? webNavNotifier;
+  final ValueNotifier<String>? webCategoryNotifier;
+  final ValueNotifier<String>? webSearchNotifier;
 
   @override
   State<ContestListScreen> createState() => _ContestListScreenState();
 }
 
 class _ContestListScreenState extends State<ContestListScreen> {
-  int _bottomNavIndex = 0;
-
-  late final List<GlobalKey<NavigatorState>> _navKeys = [
+  int _bottomNavIndex = 0;  late final List<GlobalKey<NavigatorState>> _navKeys = [
+    ContestListScreen.stationNavKey,
     ContestListScreen.homeNavKey,
+    GlobalKey<NavigatorState>(),
+    GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
     GlobalKey<NavigatorState>(),
@@ -96,11 +110,18 @@ class _ContestListScreenState extends State<ContestListScreen> {
           children: [
             Navigator(
               key: _navKeys[0],
-              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _HomeTab()),
+              onGenerateRoute: (_) => MaterialPageRoute(
+                builder: (_) => const StationListScreen(),
+              ),
             ),
             Navigator(
               key: _navKeys[1],
-              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _MapTab()),
+              onGenerateRoute: (_) => MaterialPageRoute(
+                builder: (_) => _HomeTab(
+                  webCategoryNotifier: widget.webCategoryNotifier,
+                  webSearchNotifier: widget.webSearchNotifier,
+                ),
+              ),
             ),
             Navigator(
               key: _navKeys[2],
@@ -108,11 +129,23 @@ class _ContestListScreenState extends State<ContestListScreen> {
             ),
             Navigator(
               key: _navKeys[3],
-              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _ActivityTab()),
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _MapTab()),
             ),
             Navigator(
               key: _navKeys[4],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _ActivityTab()),
+            ),
+            Navigator(
+              key: _navKeys[5],
               onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _UserProfileTab()),
+            ),
+            Navigator(
+              key: _navKeys[6],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const _SavedContestsTab()),
+            ),
+            Navigator(
+              key: _navKeys[7],
+              onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const SubscriptionUpgradeScreen()),
             ),
           ],
         ),
@@ -145,9 +178,10 @@ class _ContestListScreenState extends State<ContestListScreen> {
                 widget.onWebNavChange?.call(index);
               },
               items: const [
-                BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
+                BottomNavigationBarItem(icon: Icon(LucideIcons.radio), label: 'Stations'),
+                BottomNavigationBarItem(icon: Icon(LucideIcons.trophy), label: 'Contests'),
+                BottomNavigationBarItem(icon: Icon(LucideIcons.flame), label: 'Explore'),
                 BottomNavigationBarItem(icon: Icon(LucideIcons.map), label: 'Map'),
-                BottomNavigationBarItem(icon: Icon(LucideIcons.flame), label: 'Explore Feed'),
                 BottomNavigationBarItem(icon: Icon(LucideIcons.bell), label: 'Activity'),
                 BottomNavigationBarItem(icon: Icon(LucideIcons.user), label: 'Profile'),
               ],
@@ -163,7 +197,13 @@ class _ContestListScreenState extends State<ContestListScreen> {
 // HOME TAB — feed with search, categories, grid/list toggle
 // ---------------------------------------------------------------------------
 class _HomeTab extends StatefulWidget {
-  const _HomeTab();
+  final ValueNotifier<String>? webCategoryNotifier;
+  final ValueNotifier<String>? webSearchNotifier;
+
+  const _HomeTab({
+    this.webCategoryNotifier,
+    this.webSearchNotifier,
+  });
 
   @override
   State<_HomeTab> createState() => _HomeTabState();
@@ -175,8 +215,51 @@ class _HomeTabState extends State<_HomeTab> {
   bool _isSearching = false;
   String _searchQuery = '';
   String _selectedCategory = 'All';
+  bool _showingAllTrending = false;
+  bool _showingAllNew = false;
   final TextEditingController _searchController = TextEditingController();
-  final List<String> _categories = ['All', 'Music', 'Dance', 'Comedy', 'Art', 'Sports'];
+  final List<String> _categories = ['All', 'Music', 'Dance', 'Comedy', 'Art', 'Sports', 'Gaming'];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.webCategoryNotifier?.addListener(_onWebCategoryChanged);
+    widget.webSearchNotifier?.addListener(_onWebSearchChanged);
+    if (widget.webCategoryNotifier != null) {
+      _selectedCategory = widget.webCategoryNotifier!.value;
+    }
+    if (widget.webSearchNotifier != null) {
+      _searchQuery = widget.webSearchNotifier!.value;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.webCategoryNotifier?.removeListener(_onWebCategoryChanged);
+    widget.webSearchNotifier?.removeListener(_onWebSearchChanged);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onWebCategoryChanged() {
+    if (mounted && widget.webCategoryNotifier != null) {
+      setState(() {
+        _selectedCategory = widget.webCategoryNotifier!.value;
+        _showingAllTrending = false;
+        _showingAllNew = false;
+      });
+    }
+  }
+
+  void _onWebSearchChanged() {
+    if (mounted && widget.webSearchNotifier != null) {
+      setState(() {
+        _searchQuery = widget.webSearchNotifier!.value;
+        _showingAllTrending = false;
+        _showingAllNew = false;
+      });
+    }
+  }
 
   List<ContestModel> _getFilteredContests(List<ContestModel> allContests, RankingEngine engine) {
     return allContests.where((c) {
@@ -195,12 +278,6 @@ class _HomeTabState extends State<_HomeTab> {
   }
 
   @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Consumer<RankingEngine>(
       builder: (context, engine, child) {
@@ -210,85 +287,98 @@ class _HomeTabState extends State<_HomeTab> {
         final hasPhoto = profile != null && profile.photoURL.isNotEmpty;
 
         return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0A0A0A),
-        elevation: 0,
-        leading: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: CircleAvatar(
-            backgroundImage: hasPhoto ? AvatarHelper.getSafeAvatarProvider(profile.photoURL) : null,
-            backgroundColor: Colors.grey.shade900,
-            child: !hasPhoto 
-                ? const Icon(LucideIcons.user, size: 16, color: Colors.white60) 
-                : null,
-          ),
-        ),
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true,
-                onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
-                decoration: const InputDecoration(
-                  hintText: 'Search contests...',
-                  border: InputBorder.none,
-                  hintStyle: TextStyle(color: Colors.white54),
+          backgroundColor: const Color(0xFF0A0A0A),
+          appBar: kIsWeb
+              ? null
+              : AppBar(
+                  backgroundColor: const Color(0xFF0A0A0A),
+                  elevation: 0,
+                  leading: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: CircleAvatar(
+                      backgroundImage: hasPhoto ? AvatarHelper.getSafeAvatarProvider(profile.photoURL) : null,
+                      backgroundColor: Colors.grey.shade900,
+                      child: !hasPhoto 
+                          ? const Icon(LucideIcons.user, size: 16, color: Colors.white60) 
+                          : null,
+                    ),
+                  ),
+                  title: _isSearching
+                      ? TextField(
+                          controller: _searchController,
+                          autofocus: true,
+                          onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
+                          decoration: const InputDecoration(
+                            hintText: 'Search contests...',
+                            border: InputBorder.none,
+                            hintStyle: TextStyle(color: Colors.white54),
+                          ),
+                          style: const TextStyle(color: Colors.white),
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(LucideIcons.flame, color: AppTheme.primary),
+                            const SizedBox(width: 8),
+                            const Text('MLIVECAST', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 1)),
+                          ],
+                        ),
+                  actions: [
+                    IconButton(
+                      icon: Icon(_isSearching ? LucideIcons.x : LucideIcons.search, color: Colors.white),
+                      onPressed: () => setState(() {
+                        _isSearching = !_isSearching;
+                        if (!_isSearching) {
+                          _searchController.clear();
+                          _searchQuery = '';
+                        }
+                      }),
+                    ),
+                    IconButton(
+                      icon: Icon(_isGridView ? LucideIcons.list : LucideIcons.layoutGrid, color: Colors.white),
+                      onPressed: () => setState(() => _isGridView = !_isGridView),
+                      tooltip: _isGridView ? 'List View' : 'Grid View',
+                    ),
+                  ],
                 ),
-                style: const TextStyle(color: Colors.white),
-              )
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(LucideIcons.flame, color: AppTheme.primary),
-                  const SizedBox(width: 8),
-                  const Text('MLIVECAST', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18, letterSpacing: 1)),
-                ],
-              ),
-        actions: [
-          IconButton(
-            icon: Icon(_isSearching ? LucideIcons.x : LucideIcons.search, color: Colors.white),
-            onPressed: () => setState(() {
-              _isSearching = !_isSearching;
-              if (!_isSearching) {
-                _searchController.clear();
-                _searchQuery = '';
-              }
-            }),
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!kIsWeb) ...[
+                // Top tabs
+                _buildTopTabs(),
+                // Category chips
+                _buildCategoryChips(),
+                // Trending banner
+                _buildTrendingBar(),
+              ],
+              // Contest list / grid
+              Expanded(child: _buildContestFeed(filteredContests)),
+            ],
           ),
-          IconButton(
-            icon: Icon(_isGridView ? LucideIcons.list : LucideIcons.layoutGrid, color: Colors.white),
-            onPressed: () => setState(() => _isGridView = !_isGridView),
-            tooltip: _isGridView ? 'List View' : 'Grid View',
-          ),
-        ],
-      ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Top tabs
-          _buildTopTabs(),
-          // Category chips
-          _buildCategoryChips(),
-          // Trending banner
-          _buildTrendingBar(),
-          // Contest list / grid
-          Expanded(child: _buildContestFeed(filteredContests)),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppTheme.primary,
-        foregroundColor: Colors.white,
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: const Icon(LucideIcons.trophy, size: 24),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const CreateContestScreen()),
-          );
-        },
-      ),
-    );
+          floatingActionButton: kIsWeb
+              ? null
+              : FloatingActionButton(
+                  heroTag: null,
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: const Icon(LucideIcons.trophy, size: 24),
+                  onPressed: () {
+                    final engine = Provider.of<RankingEngine>(context, listen: false);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChangeNotifierProvider.value(
+                          value: engine,
+                          child: const CreateContestScreen(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        );
       },
     );
   }
@@ -400,6 +490,295 @@ class _HomeTabState extends State<_HomeTab> {
     );
   }
 
+  Widget _buildWebCategoryChips() {
+    return SizedBox(
+      height: 38,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _categories.length,
+        itemBuilder: (_, i) {
+          final cat = _categories[i];
+          final selected = _selectedCategory == cat;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedCategory = cat;
+                  _showingAllTrending = false;
+                  _showingAllNew = false;
+                });
+                widget.webCategoryNotifier?.value = cat;
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? Colors.white : const Color(0xFF1E1E1E),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: selected ? Colors.transparent : Colors.white12),
+                ),
+                child: Text(
+                  cat,
+                  style: TextStyle(
+                    color: selected ? Colors.black : Colors.white,
+                    fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, String subtitle, {VoidCallback? onViewAll}) {
+    return Row(
+      children: [
+        if (title.contains('Trending'))
+          const Icon(LucideIcons.flame, color: AppTheme.primary, size: 20)
+        else
+          const Icon(LucideIcons.sparkles, color: AppTheme.primary, size: 20),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+            Text(
+              subtitle,
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+          ],
+        ),
+        if (onViewAll != null) ...[
+          const Spacer(),
+          TextButton(
+            onPressed: onViewAll,
+            child: const Row(
+              children: [
+                Text('View all', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                SizedBox(width: 4),
+                Icon(LucideIcons.chevronRight, color: Colors.white54, size: 14),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildWebContestCard(BuildContext context, ContestModel contest) {
+    final engine = Provider.of<RankingEngine>(context, listen: false);
+    final mockDuration = '${contest.id.hashCode.abs() % 3 + 2}:${(contest.id.hashCode.abs() % 50 + 10).toString().padLeft(2, '0')}';
+    
+    Color categoryColor;
+    IconData categoryIcon;
+    switch (contest.category.toLowerCase()) {
+      case 'music':
+        categoryColor = Colors.redAccent;
+        categoryIcon = LucideIcons.music;
+        break;
+      case 'dance':
+        categoryColor = Colors.pinkAccent;
+        categoryIcon = LucideIcons.star;
+        break;
+      case 'comedy':
+        categoryColor = Colors.orangeAccent;
+        categoryIcon = LucideIcons.smile;
+        break;
+      case 'art':
+        categoryColor = Colors.purpleAccent;
+        categoryIcon = LucideIcons.palette;
+        break;
+      case 'sports':
+        categoryColor = Colors.blueAccent;
+        categoryIcon = LucideIcons.dribbble;
+        break;
+      case 'gaming':
+        categoryColor = Colors.deepPurpleAccent;
+        categoryIcon = LucideIcons.gamepad2;
+        break;
+      default:
+        categoryColor = Colors.amber;
+        categoryIcon = LucideIcons.trophy;
+    }
+
+    return GestureDetector(
+      onTap: () => _openContest(context, contest),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  MediaContentPreview(
+                    type: contestCoverType(contest),
+                    contentUrl: contest.image,
+                    height: double.infinity,
+                    autoPlayVideo: false,
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: categoryColor,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        contest.category,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (contest.type == 'Official')
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.accent,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(LucideIcons.checkCircle, size: 10, color: Colors.black),
+                            SizedBox(width: 2),
+                            Text('OFFICIAL', style: TextStyle(color: Colors.black, fontSize: 8, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        mockDuration,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: categoryColor.withOpacity(0.2),
+                child: Icon(categoryIcon, color: categoryColor, size: 16),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      contest.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        height: 1.2,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    StreamBuilder<UserModel?>(
+                      stream: Provider.of<RankingEngine>(context, listen: false).watchUserProfile(contest.creatorId),
+                      builder: (context, snapshot) {
+                        final name = snapshot.data?.displayName ?? 'Organizer';
+                        return Text(
+                          'by $name',
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${contest.totalVotes} votes • ${contest.participantCount} participants',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Text(
+                          'Ends in ${contest.calculatedEndsIn}',
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(LucideIcons.star, size: 12, color: Colors.amber),
+                              const SizedBox(width: 2),
+                              Text(
+                                contest.rating.toStringAsFixed(1),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildContestFeed(List<ContestModel> contests) {
     if (contests.isEmpty) {
       String emptyMessage = 'No contests found';
@@ -427,6 +806,187 @@ class _HomeTabState extends State<_HomeTab> {
           ],
         ),
       );
+    }
+
+    if (kIsWeb) {
+      if (_showingAllTrending || _showingAllNew) {
+        final title = _showingAllTrending ? 'Trending Contests' : 'New Contests';
+        final subtitle = _showingAllTrending 
+            ? 'All contests sorted by popularity/votes' 
+            : 'All contests sorted by end date';
+        
+        final sortedContests = List<ContestModel>.from(contests);
+        if (_showingAllTrending) {
+          sortedContests.sort((a, b) => b.totalVotes.compareTo(a.totalVotes));
+        } else {
+          sortedContests.sort((a, b) {
+            if (a.endDate == null) return 1;
+            if (b.endDate == null) return -1;
+            return b.endDate!.compareTo(a.endDate!);
+          });
+        }
+
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(LucideIcons.arrowLeft, color: Colors.white),
+                  onPressed: () => setState(() {
+                    _showingAllTrending = false;
+                    _showingAllNew = false;
+                  }),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildSectionHeader(title, subtitle),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - (3 * 24)) / 4;
+                final cardHeight = (width * 9 / 16) + 125;
+                final ratio = width / cardHeight;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 24,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: ratio,
+                  ),
+                  itemCount: sortedContests.length,
+                  itemBuilder: (ctx, i) => _buildWebContestCard(ctx, sortedContests[i]),
+                );
+              },
+            ),
+            const SizedBox(height: 100),
+          ],
+        );
+      }
+
+      if (_searchQuery.isEmpty && _selectedCategory == 'All' && _selectedTabIndex == 0) {
+        final trendingContests = List<ContestModel>.from(contests)
+          ..sort((a, b) => b.totalVotes.compareTo(a.totalVotes));
+        final trendingTake = trendingContests.take(4).toList();
+
+        final trendingIds = trendingTake.map((c) => c.id).toSet();
+        final newContests = List<ContestModel>.from(contests)
+          ..sort((a, b) {
+            if (a.endDate == null) return 1;
+            if (b.endDate == null) return -1;
+            return b.endDate!.compareTo(a.endDate!);
+          });
+        // Keep every new contest in the home feed so users can continue
+        // scrolling as more contests are created.
+        List<ContestModel> newTake = newContests.where((c) => !trendingIds.contains(c.id)).toList();
+        if (newTake.isEmpty) {
+          newTake = List<ContestModel>.from(contests);
+        }
+
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          children: [
+            _buildWebCategoryChips(),
+            const SizedBox(height: 24),
+            _buildSectionHeader(
+              'Trending Now',
+              'Discover the most popular contests right now',
+              onViewAll: () => setState(() {
+                _showingAllTrending = true;
+                _showingAllNew = false;
+              }),
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - (3 * 24)) / 4;
+                final cardHeight = (width * 9 / 16) + 125;
+                final ratio = width / cardHeight;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 24,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: ratio,
+                  ),
+                  itemCount: trendingTake.length,
+                  itemBuilder: (ctx, i) => _buildWebContestCard(ctx, trendingTake[i]),
+                );
+              },
+            ),
+            const SizedBox(height: 20),
+            _buildSectionHeader(
+              'New Contests',
+              'Fresh contests you might like',
+              onViewAll: () => setState(() {
+                _showingAllNew = true;
+                _showingAllTrending = false;
+              }),
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - (3 * 24)) / 4;
+                final cardHeight = (width * 9 / 16) + 125;
+                final ratio = width / cardHeight;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 24,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: ratio,
+                  ),
+                  itemCount: newTake.length,
+                  itemBuilder: (ctx, i) => _buildWebContestCard(ctx, newTake[i]),
+                );
+              },
+            ),
+            const SizedBox(height: 100),
+          ],
+        );
+      } else {
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          children: [
+            _buildWebCategoryChips(),
+            const SizedBox(height: 24),
+            _buildSectionHeader(
+              _selectedCategory != 'All' ? '$_selectedCategory Contests' : 'Search Results',
+              'Found ${contests.length} contests',
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - (3 * 24)) / 4;
+                final cardHeight = (width * 9 / 16) + 125;
+                final ratio = width / cardHeight;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 24,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: ratio,
+                  ),
+                  itemCount: contests.length,
+                  itemBuilder: (ctx, i) => _buildWebContestCard(ctx, contests[i]),
+                );
+              },
+            ),
+            const SizedBox(height: 100),
+          ],
+        );
+      }
     }
 
     if (_isGridView) {
@@ -479,10 +1039,12 @@ class _HomeTabState extends State<_HomeTab> {
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: Stack(
                 children: [
-                  Image.network(contest.image,
-                      height: 220, width: double.infinity, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          Container(height: 220, color: Colors.grey.shade900)),
+                  MediaContentPreview(
+                    type: contestCoverType(contest),
+                    contentUrl: contest.image,
+                    height: 220,
+                    autoPlayVideo: true,
+                  ),
                   Container(
                     height: 220,
                     decoration: BoxDecoration(
@@ -620,16 +1182,11 @@ class _HomeTabState extends State<_HomeTab> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.network(contest.image, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade900)),
-              Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withValues(alpha: 0.9)],
-                  ),
-                ),
+              MediaContentPreview(
+                type: contestCoverType(contest),
+                contentUrl: contest.image,
+                height: double.infinity,
+                autoPlayVideo: true,
               ),
               Positioned(
                 top: 8,
@@ -974,10 +1531,13 @@ class _UserProfileTabState extends State<_UserProfileTab> {
           else if (post.type == 'image')
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
+                final engine = Provider.of<RankingEngine>(context, listen: false);
+                Navigator.of(context, rootNavigator: true).push(
                   MaterialPageRoute(
-                    builder: (_) => PostDetailScreen(postId: post.id),
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: engine,
+                      child: PostDetailScreen(postId: post.id, initialPost: post),
+                    ),
                   ),
                 );
               },
@@ -993,10 +1553,13 @@ class _UserProfileTabState extends State<_UserProfileTab> {
           else if (post.type == 'video')
             GestureDetector(
               onTap: () {
-                Navigator.push(
-                  context,
+                final engine = Provider.of<RankingEngine>(context, listen: false);
+                Navigator.of(context, rootNavigator: true).push(
                   MaterialPageRoute(
-                    builder: (_) => PostDetailScreen(postId: post.id),
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: engine,
+                      child: PostDetailScreen(postId: post.id, initialPost: post),
+                    ),
                   ),
                 );
               },
@@ -1051,10 +1614,13 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
-                    Navigator.push(
-                      context,
+                    final engine = Provider.of<RankingEngine>(context, listen: false);
+                    Navigator.of(context, rootNavigator: true).push(
                       MaterialPageRoute(
-                        builder: (_) => PostDetailScreen(postId: post.id),
+                        builder: (_) => ChangeNotifierProvider.value(
+                          value: engine,
+                          child: PostDetailScreen(postId: post.id, initialPost: post),
+                        ),
                       ),
                     );
                   },
@@ -1437,14 +2003,27 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                         ),
                       ),
                       const SizedBox(height: 6),
+                      if (user.email.isNotEmpty)
+                        Row(
+	                  mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(LucideIcons.mail, color: Colors.white38, size: 19),
+                            const SizedBox(width: 4),
+                            Text(
+                              user.email,
+                              style: const TextStyle(color: Colors.white54, fontSize: 19),
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(LucideIcons.mapPin, color: Colors.white38, size: 13),
+                          const Icon(LucideIcons.mapPin, color: Colors.white38, size: 19),
                           const SizedBox(width: 4),
                           Text(
                             '${user.city}, ${user.country} (${user.zip})',
-                            style: const TextStyle(color: Colors.white54, fontSize: 13),
+                            style: const TextStyle(color: Colors.white54, fontSize: 19),
                           ),
                         ],
                       ),
@@ -1937,9 +2516,15 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                       style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5),
                     ),
                     onPressed: () {
+                      final engine = Provider.of<RankingEngine>(context, listen: false);
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const CreateContestScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider.value(
+                            value: engine,
+                            child: const CreateContestScreen(),
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -2657,10 +3242,13 @@ class _ExploreTabState extends State<_ExploreTab> {
             ),
           GestureDetector(
             onTap: () {
-              Navigator.push(
-                context,
+              final engine = Provider.of<RankingEngine>(context, listen: false);
+              Navigator.of(context, rootNavigator: true).push(
                 MaterialPageRoute(
-                  builder: (_) => PostDetailScreen(postId: post.id),
+                  builder: (_) => ChangeNotifierProvider.value(
+                    value: engine,
+                    child: PostDetailScreen(postId: post.id, initialPost: post),
+                  ),
                 ),
               );
             },
@@ -2753,10 +3341,13 @@ class _ExploreTabState extends State<_ExploreTab> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
-                    Navigator.push(
-                      context,
+                    final engine = Provider.of<RankingEngine>(context, listen: false);
+                    Navigator.of(context, rootNavigator: true).push(
                       MaterialPageRoute(
-                        builder: (_) => PostDetailScreen(postId: post.id),
+                        builder: (_) => ChangeNotifierProvider.value(
+                          value: engine,
+                          child: PostDetailScreen(postId: post.id, initialPost: post),
+                        ),
                       ),
                     );
                   },
@@ -2875,6 +3466,256 @@ class _ActivityTab extends StatelessWidget {
                 },
               );
             },
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SAVED CONTESTS TAB — displays bookmarked/followed contests in a grid
+// ---------------------------------------------------------------------------
+class _SavedContestsTab extends StatelessWidget {
+  const _SavedContestsTab();
+
+  void _openContest(BuildContext context, ContestModel contest) {
+    final engine = Provider.of<RankingEngine>(context, listen: false);
+    engine.loadContestEntries(contest.id);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ContestDetailScreen(contest: contest)),
+    );
+  }
+
+  Widget _buildWebContestCard(BuildContext context, ContestModel contest) {
+    final mockDuration = '${contest.id.hashCode.abs() % 3 + 2}:${(contest.id.hashCode.abs() % 50 + 10).toString().padLeft(2, '0')}';
+    
+    Color categoryColor;
+    IconData categoryIcon;
+    switch (contest.category.toLowerCase()) {
+      case 'music':
+        categoryColor = Colors.redAccent;
+        categoryIcon = LucideIcons.music;
+        break;
+      case 'dance':
+        categoryColor = Colors.pinkAccent;
+        categoryIcon = LucideIcons.star;
+        break;
+      case 'comedy':
+        categoryColor = Colors.orangeAccent;
+        categoryIcon = LucideIcons.smile;
+        break;
+      case 'art':
+        categoryColor = Colors.purpleAccent;
+        categoryIcon = LucideIcons.palette;
+        break;
+      case 'sports':
+        categoryColor = Colors.blueAccent;
+        categoryIcon = LucideIcons.dribbble;
+        break;
+      case 'gaming':
+        categoryColor = Colors.deepPurpleAccent;
+        categoryIcon = LucideIcons.gamepad2;
+        break;
+      default:
+        categoryColor = Colors.amber;
+        categoryIcon = LucideIcons.trophy;
+    }
+
+    return GestureDetector(
+      onTap: () => _openContest(context, contest),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  MediaContentPreview(
+                    type: contest.image.toLowerCase().endsWith('.mp4') ? 'video' : 'image',
+                    contentUrl: contest.image,
+                    height: double.infinity,
+                    autoPlayVideo: false,
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: categoryColor,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        contest.category,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.8),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        mockDuration,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: categoryColor.withOpacity(0.2),
+                child: Icon(categoryIcon, color: categoryColor, size: 16),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      contest.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        height: 1.2,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Saved Contest',
+                      style: TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${contest.totalVotes} votes • ${contest.participantCount} participants',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<RankingEngine>(
+      builder: (context, engine, _) {
+        final savedContests = engine.contests
+            .where((c) => engine.followedContestIds.contains(c.id))
+            .toList();
+
+        return Scaffold(
+          backgroundColor: const Color(0xFF0A0A0A),
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+                child: Row(
+                  children: [
+                    const Icon(LucideIcons.bookmark, color: AppTheme.primary, size: 24),
+                    const SizedBox(width: 12),
+                    const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Saved Contests',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24),
+                        ),
+                        Text(
+                          'Your bookmarked and followed contests',
+                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${savedContests.length} contests',
+                      style: const TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: savedContests.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(LucideIcons.bookmark, size: 64, color: Colors.white.withOpacity(0.05)),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No saved contests yet',
+                              style: TextStyle(color: Colors.white38, fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Tap the FOLLOW button on a contest details page to save it here',
+                              style: TextStyle(color: Colors.white24, fontSize: 13),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      )
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final width = (constraints.maxWidth - (3 * 24)) / 4;
+                          final cardHeight = (width * 9 / 16) + 125;
+                          final ratio = width / cardHeight;
+                          return GridView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 4,
+                              crossAxisSpacing: 24,
+                              mainAxisSpacing: 16,
+                              childAspectRatio: ratio,
+                            ),
+                            itemCount: savedContests.length,
+                            itemBuilder: (ctx, i) => _buildWebContestCard(ctx, savedContests[i]),
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
         );
       },

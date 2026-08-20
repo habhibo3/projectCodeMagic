@@ -99,11 +99,14 @@ class CoHostInviteBanner extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => LiveStreamScreen(
-                      contest: contest,
-                      entryId: invite.entryId,
-                      isHost: false,
-                      isCoHost: true,
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: engine,
+                      child: LiveStreamScreen(
+                        contest: contest,
+                        entryId: invite.entryId, // null when organizer invited (Organizer Mode)
+                        isHost: false,
+                        isCoHost: true,
+                      ),
                     ),
                   ),
                 );

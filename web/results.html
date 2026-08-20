@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Final Results — Mlivecast</title>
+  <meta name="description" content="Final vote results for Mlivecast contests">
+
+  <!-- Firebase JS SDK (CDN for local development compatibility) -->
+  <script src="https://www.gstatic.com/firebasejs/12.14.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore-compat.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&family=Cormorant+Garamond:wght@300;400;500;600;700&family=Montserrat:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-deep: #0a0a0a;
+      --bg-card: #141414;
+      --bg-elevated: #1f1f1f;
+      --gold-primary: #c9a227;
+      --gold-light: #e8c547;
+      --gold-dark: #8b6914;
+      --silver: #b8b8b8;
+      --bronze: #cd7f32;
+      --text-white: #ffffff;
+      --text-muted: #a0a0a0;
+      --text-dim: #666666;
+    }
+
+    body {
+      background-color: var(--bg-deep);
+      background-image: 
+        radial-gradient(ellipse at top, rgba(201,162,39,0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at bottom right, rgba(201,162,39,0.05) 0%, transparent 50%);
+      color: var(--text-white);
+      font-family: 'Montserrat', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      padding: 80px 20px 60px;
+      position: relative;
+    }
+
+    .header::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 200px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-primary), transparent);
+    }
+
+    .header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(36px, 5vw, 72px);
+      font-weight: 700;
+      color: var(--gold-primary);
+      letter-spacing: 8px;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    .header .subtitle {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(18px, 2.5vw, 28px);
+      color: var(--text-muted);
+      letter-spacing: 6px;
+      font-weight: 300;
+      font-style: italic;
+    }
+
+    /* ── Loading State ── */
+    #loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      gap: 30px;
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 2px solid rgba(201,162,39,0.2);
+      border-top-color: var(--gold-primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      color: var(--text-muted);
+      font-size: 14px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    /* ── Error State ── */
+    #error {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      gap: 20px;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .error-icon {
+      font-size: 64px;
+      color: var(--gold-primary);
+    }
+
+    .error-message {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 400px;
+      line-height: 1.6;
+    }
+
+    /* ── Main Content ── */
+    #app {
+      display: none;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+    }
+
+    /* ── Top 3 Winners ── */
+    .winners-section {
+      margin-bottom: 100px;
+    }
+
+    .top-winners {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 40px;
+      flex-wrap: wrap;
+      padding: 40px 0;
+    }
+
+    .winner-card {
+      background: linear-gradient(180deg, var(--bg-card) 0%, var(--bg-elevated) 100%);
+      border: 1px solid rgba(201,162,39,0.2);
+      border-radius: 4px;
+      padding: 50px 35px;
+      text-align: center;
+      position: relative;
+      transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .winner-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--gold-primary), transparent);
+    }
+
+    .winner-card.gold {
+      width: 380px;
+      transform: translateY(-30px);
+      box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+    }
+
+    .winner-card.silver {
+      width: 320px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+
+    .winner-card.bronze {
+      width: 320px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+    }
+
+    .winner-card:hover {
+      transform: translateY(-10px);
+      box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+    }
+
+    .gold:hover {
+      transform: translateY(-40px);
+    }
+
+    .rank-number {
+      font-family: 'Playfair Display', serif;
+      font-size: 72px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 20px;
+      opacity: 0.3;
+    }
+
+    .gold .rank-number {
+      color: var(--gold-primary);
+    }
+
+    .silver .rank-number {
+      color: var(--silver);
+    }
+
+    .bronze .rank-number {
+      color: var(--bronze);
+    }
+
+    .contestant-photo {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      margin: 0 auto 30px;
+      background: var(--bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      border: 2px solid rgba(201,162,39,0.3);
+      overflow: hidden;
+    }
+
+    .gold .contestant-photo {
+      border-color: var(--gold-primary);
+    }
+
+    .silver .contestant-photo {
+      border-color: var(--silver);
+    }
+
+    .bronze .contestant-photo {
+      border-color: var(--bronze);
+    }
+
+    .contestant-photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .contestant-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--text-white);
+      margin-bottom: 15px;
+      letter-spacing: 2px;
+    }
+
+    .vote-count {
+      font-family: 'Playfair Display', serif;
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .gold .vote-count {
+      color: var(--gold-primary);
+    }
+
+    .silver .vote-count {
+      color: var(--silver);
+    }
+
+    .bronze .vote-count {
+      color: var(--bronze);
+    }
+
+    .vote-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      font-weight: 500;
+    }
+
+    .prize-display {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 14px;
+      color: var(--gold-primary);
+      margin-top: 12px;
+      font-weight: 500;
+      letter-spacing: 1px;
+    }
+
+    /* ── Recognition Prizes ── */
+    .recognition-section {
+      margin-bottom: 80px;
+    }
+
+    .section-title {
+      text-align: center;
+      font-family: 'Playfair Display', serif;
+      font-size: 32px;
+      color: var(--text-white);
+      margin-bottom: 50px;
+      letter-spacing: 4px;
+      font-weight: 400;
+    }
+
+    .recognition-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 30px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .recognition-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 4px;
+      padding: 35px 25px;
+      text-align: center;
+      transition: all 0.3s ease;
+    }
+
+    .recognition-card:hover {
+      border-color: rgba(201,162,39,0.3);
+      transform: translateY(-5px);
+    }
+
+    .recognition-rank {
+      font-family: 'Playfair Display', serif;
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+
+    .recognition-photo {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      margin: 0 auto 20px;
+      background: var(--bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      border: 1px solid rgba(255,255,255,0.1);
+      overflow: hidden;
+    }
+
+    .recognition-photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .recognition-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-white);
+      margin-bottom: 12px;
+      letter-spacing: 1px;
+    }
+
+    .recognition-votes {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--gold-primary);
+    }
+
+    .recognition-prize {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      font-weight: 500;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid rgba(201,162,39,0.2);
+      padding: 60px 20px;
+      margin-top: 60px;
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 40px;
+    }
+
+    .footer-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 16px;
+      color: var(--text-muted);
+      font-weight: 400;
+      letter-spacing: 1px;
+      line-height: 1.6;
+    }
+
+    .footer-center {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 14px;
+      color: var(--gold-primary);
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      font-weight: 600;
+    }
+
+    .footer-right {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 16px;
+      color: var(--text-muted);
+      font-weight: 400;
+      letter-spacing: 1px;
+      line-height: 1.6;
+      text-align: right;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 1024px) {
+      .top-winners {
+        flex-direction: column;
+        align-items: center;
+        gap: 30px;
+      }
+
+      .winner-card {
+        width: 100% !important;
+        max-width: 350px;
+        transform: none !important;
+      }
+
+      .winner-card:hover {
+        transform: translateY(-5px) !important;
+      }
+
+      .footer-content {
+        flex-direction: column;
+        text-align: center;
+        gap: 30px;
+      }
+
+      .footer-right {
+        text-align: center;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .header {
+        padding: 60px 20px 40px;
+      }
+
+      .header h1 {
+        letter-spacing: 4px;
+      }
+
+      .header .subtitle {
+        letter-spacing: 3px;
+      }
+
+      .recognition-grid {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 20px;
+      }
+
+      .footer {
+        padding: 40px 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <h1>Final Results</h1>
+    <div class="subtitle">Live Vote Standings</div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">Loading results...</div>
+  </div>
+
+  <!-- Error -->
+  <div id="error">
+    <div class="error-icon">⚠️</div>
+    <div class="error-message"></div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app">
+    <!-- Top 3 Winners -->
+    <div class="winners-section">
+      <div class="top-winners" id="top-winners"></div>
+    </div>
+
+    <!-- Recognition Prizes -->
+    <div class="recognition-section">
+      <div class="section-title">Recognition Prizes</div>
+      <div class="recognition-grid" id="recognition-grid"></div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer-content">
+      <div class="footer-text">
+        Thank you for supporting creativity and Vietnamese tradition
+      </div>
+      <div class="footer-center">
+        Every vote counts
+      </div>
+      <div class="footer-right">
+        Top 1 entry will be the winner of the Áo Dài Việt Nam and Tradition Contest
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let contestPrizes = [];
+
+    function getContestId() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('contestId');
+    }
+
+    function showApp() {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+    }
+
+    function showError(message) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('error').style.display = 'flex';
+      document.getElementById('error').querySelector('.error-message').textContent = message;
+    }
+
+    function getPrizeForRank(rank) {
+      if (!contestPrizes || contestPrizes.length === 0) {
+        // Fallback to default prizes if none configured
+        const defaults = [
+          { rank: 1, type: 'gold', amount: '', description: 'Gold Prize' },
+          { rank: 2, type: 'silver', amount: '', description: 'Silver Prize' },
+          { rank: 3, type: 'bronze', amount: '', description: 'Bronze Prize' },
+        ];
+        const prize = defaults.find(p => p.rank === rank);
+        return prize || { rank, type: 'recognition', amount: '', description: 'Recognition Prize' };
+      }
+      
+      const prize = contestPrizes.find(p => p.rank === rank);
+      if (prize) return prize;
+      
+      // If no specific prize for this rank, return recognition prize
+      return { rank, type: 'recognition', amount: '', description: 'Recognition Prize' };
+    }
+
+    function renderTopWinners(entries) {
+      const container = document.getElementById('top-winners');
+      container.innerHTML = '';
+
+      const placements = [
+        { index: 0, title: '1st', class: 'gold' },
+        { index: 1, title: '2nd', class: 'silver' },
+        { index: 2, title: '3rd', class: 'bronze' }
+      ];
+
+      placements.forEach(placement => {
+        if (entries[placement.index]) {
+          const entry = entries[placement.index];
+          const prize = getPrizeForRank(placement.index + 1);
+          const card = document.createElement('div');
+          card.className = `winner-card ${placement.class}`;
+          
+          const photoHtml = entry.userAvatar 
+            ? `<img src="${entry.userAvatar}" alt="${entry.userName}">`
+            : '👤';
+
+          const prizeDisplay = prize.amount ? `${prize.amount} - ${prize.description}` : prize.description;
+
+          card.innerHTML = `
+            <div class="rank-number">${placement.title}</div>
+            <div class="contestant-photo">${photoHtml}</div>
+            <div class="contestant-name">${entry.userName || 'Contestant ' + (placement.index + 1)}</div>
+            <div class="vote-count">${entry.totalVotes || 0}</div>
+            <div class="vote-label">Votes</div>
+            ${prizeDisplay ? `<div class="prize-display">${prizeDisplay}</div>` : ''}
+          `;
+          container.appendChild(card);
+        }
+      });
+    }
+
+    function renderRecognitionPrizes(entries) {
+      const container = document.getElementById('recognition-grid');
+      container.innerHTML = '';
+
+      for (let i = 3; i < Math.min(entries.length, 10); i++) {
+        const entry = entries[i];
+        const prize = getPrizeForRank(i + 1);
+        const card = document.createElement('div');
+        card.className = 'recognition-card';
+        
+        const photoHtml = entry.userAvatar 
+          ? `<img src="${entry.userAvatar}" alt="${entry.userName}">`
+          : '👤';
+
+        const prizeDisplay = prize.amount ? `${prize.amount}` : prize.description;
+
+        card.innerHTML = `
+          <div class="recognition-rank">${i + 1}</div>
+          <div class="recognition-photo">${photoHtml}</div>
+          <div class="recognition-name">${entry.userName || 'Contestant ' + (i + 1)}</div>
+          <div class="recognition-votes">${entry.totalVotes || 0}</div>
+          ${prizeDisplay ? `<div class="recognition-prize">${prizeDisplay}</div>` : ''}
+        `;
+        container.appendChild(card);
+      }
+
+      if (container.children.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-dim); text-align: center; grid-column: 1 / -1; padding: 40px;">No recognition prizes yet</div>';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const contestId = getContestId();
+
+      if (!contestId) {
+        showError('No contest ID specified. Use ?contestId=YOUR_CONTEST_ID in the URL.');
+        return;
+      }
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyBJi0haOzwExV_-k4oCXkKHNJQRY_M384w",
+        authDomain: "contest-app-94050.firebaseapp.com",
+        projectId: "contest-app-94050",
+        storageBucket: "contest-app-94050.firebasestorage.app",
+        messagingSenderId: "393250629301",
+        appId: "1:393250629301:web:23b8a7d6a54c43ed6a40fc"
+      };
+
+      firebase.initializeApp(firebaseConfig);
+      initFirestore(contestId);
+    });
+
+    function initFirestore(contestId) {
+      const db = firebase.firestore();
+
+      // Fetch contest prizes first
+      db.collection('contests').doc(contestId).get().then(doc => {
+        if (doc.exists) {
+          const data = doc.data();
+          contestPrizes = data.prizes || [];
+        }
+      }).catch(err => {
+        console.warn('Could not fetch contest prizes:', err);
+      });
+
+      // Listen to entries
+      db.collection('contests').doc(contestId).collection('entries')
+        .onSnapshot(snapshot => {
+          const entries = [];
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            entries.push({
+              id: doc.id,
+              userName: data.userName || data.username || 'Unknown',
+              userAvatar: data.userAvatar || data.avatar || '',
+              totalVotes: data.totalVotes || 0,
+            });
+          });
+
+          entries.sort((a, b) => b.totalVotes - a.totalVotes);
+
+          if (entries.length === 0) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'flex';
+            document.getElementById('error').innerHTML = '<div class="error-icon">📊</div><div class="error-message">No entries yet in this contest</div>';
+            return;
+          }
+
+          showApp();
+          renderTopWinners(entries);
+          renderRecognitionPrizes(entries);
+        }, err => {
+          console.error('Firestore listener error:', err);
+          showError('Failed to load entries: ' + err.message);
+        });
+    }
+  </script>
+</body>
+</html>

@@ -18,6 +18,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _usernameController = TextEditingController();
   
   // Registration location fields
   final _zipController = TextEditingController(text: '75001');
@@ -34,6 +35,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _nameController.dispose();
+    _usernameController.dispose();
     _zipController.dispose();
     _cityController.dispose();
     _stateController.dispose();
@@ -67,10 +69,23 @@ class _AuthScreenState extends State<AuthScreen> {
         }
       } else if (_mode == 1) {
         // Sign Up
+        final username = _usernameController.text.trim().toLowerCase();
+        final isTaken = await auth.isUsernameTaken(username);
+        if (isTaken) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Username is already taken! ❌'), backgroundColor: Colors.redAccent, behavior: SnackBarBehavior.floating),
+            );
+            setState(() => _isLoading = false);
+          }
+          return;
+        }
+
         await auth.signUp(
           email: _emailController.text.trim(),
           password: _passwordController.text,
           displayName: _nameController.text.trim(),
+          username: username,
           zip: _zipController.text.trim(),
           city: _cityController.text.trim(),
           state: _stateController.text.trim(),
@@ -257,6 +272,21 @@ class _AuthScreenState extends State<AuthScreen> {
                               hint: 'Enter display name',
                               icon: LucideIcons.user,
                               validator: (val) => val == null || val.trim().isEmpty ? 'Please enter a name' : null,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildLabel('UNIQUE USERNAME'),
+                            _buildTextField(
+                              controller: _usernameController,
+                              hint: 'Choose a unique username',
+                              icon: LucideIcons.atSign,
+                              validator: (val) {
+                                if (val == null || val.trim().isEmpty) return 'Please choose a username';
+                                if (val.trim().length < 3) return 'Username must be at least 3 characters';
+                                if (RegExp(r'[^a-zA-Z0-9_]').hasMatch(val.trim())) {
+                                  return 'Letters, numbers, and underscores only';
+                                }
+                                return null;
+                              },
                             ),
                             const SizedBox(height: 16),
                           ],

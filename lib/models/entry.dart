@@ -88,9 +88,11 @@ class ContestModel {
   final String subtitle;
   final String description;
   final String rules;
-  final String prize;
+  final String prize; // Kept for backward compatibility, but use prizes list
+  final List<Map<String, dynamic>> prizes; // New structured prize system
   final String schedule;
   final String image;
+  final String coverType; // 'image' or 'video'
   final String category;
   final String type; // 'Official', 'Public'
   final int participantCount;
@@ -103,6 +105,7 @@ class ContestModel {
   // Location fields for map system
   final String city;
   final String country;
+  final String countryFlag;
   final double? latitude;
   final double? longitude;
   final String visibilityScope; // 'zip', 'city', 'state', 'country', 'global'
@@ -114,8 +117,10 @@ class ContestModel {
     required this.description,
     required this.rules,
     required this.prize,
+    this.prizes = const [], // Default to empty list for new contests
     required this.schedule,
     required this.image,
+    this.coverType = 'image',
     required this.category,
     required this.type,
     required this.participantCount,
@@ -127,6 +132,7 @@ class ContestModel {
     this.creatorId = '',
     this.city = '',
     this.country = '',
+    this.countryFlag = '',
     this.latitude,
     this.longitude,
     this.visibilityScope = 'global',
@@ -140,8 +146,10 @@ class ContestModel {
       'description': description,
       'rules': rules,
       'prize': prize,
+      'prizes': prizes,
       'schedule': schedule,
       'image': image,
+      'coverType': coverType,
       'category': category,
       'type': type,
       'participantCount': participantCount,
@@ -153,6 +161,7 @@ class ContestModel {
       'creatorId': creatorId,
       'city': city,
       'country': country,
+      'countryFlag': countryFlag,
       'latitude': latitude,
       'longitude': longitude,
       'visibilityScope': visibilityScope,
@@ -167,8 +176,10 @@ class ContestModel {
       description: map['description'] ?? '',
       rules: map['rules'] ?? '',
       prize: map['prize'] ?? '',
+      prizes: List<Map<String, dynamic>>.from(map['prizes'] ?? []),
       schedule: map['schedule'] ?? '',
       image: map['image'] ?? '',
+      coverType: map['coverType'] ?? 'image',
       category: map['category'] ?? '',
       type: map['type'] ?? 'Public',
       participantCount: map['participantCount'] ?? 0,
@@ -180,6 +191,7 @@ class ContestModel {
       creatorId: map['creatorId'] ?? '',
       city: map['city'] ?? '',
       country: map['country'] ?? '',
+      countryFlag: map['countryFlag'] ?? '',
       latitude: map['latitude']?.toDouble(),
       longitude: map['longitude']?.toDouble(),
       visibilityScope: map['visibilityScope'] ?? 'global',

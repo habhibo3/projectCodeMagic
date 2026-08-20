@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -13,10 +14,52 @@ import '../widgets/video_manager.dart';
 import 'public_profile_screen.dart';
 import 'edit_post_screen.dart';
 
+/// Opens the shared comments interface from anywhere a post is displayed.
+void showPostCommentsBottomSheet({
+  required BuildContext context,
+  required String postId,
+  required RankingEngine engine,
+}) {
+  String formatTimeAgo(DateTime dateTime) {
+    final difference = DateTime.now().difference(dateTime);
+    if (difference.inDays >= 7) return '${difference.inDays ~/ 7}w';
+    if (difference.inDays >= 1) return '${difference.inDays}d';
+    if (difference.inHours >= 1) return '${difference.inHours}h';
+    if (difference.inMinutes >= 1) return '${difference.inMinutes}m';
+    return 'Just now';
+  }
+
+  final sheet = _CommentsBottomSheet(
+    postId: postId,
+    engine: engine,
+    formatTimeAgo: formatTimeAgo,
+  );
+
+  if (kIsWeb) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xFF141416),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: SizedBox(width: 500, height: 600, child: sheet),
+      ),
+    );
+    return;
+  }
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => sheet,
+  );
+}
+
 class PostDetailScreen extends StatefulWidget {
   final String postId;
+  final PostModel? initialPost;
 
-  const PostDetailScreen({super.key, required this.postId});
+  const PostDetailScreen({super.key, required this.postId, this.initialPost});
 
   @override
   State<PostDetailScreen> createState() => _PostDetailScreenState();
@@ -33,22 +76,29 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   double _volumeBeforeMute = 1.0;
   bool _showControls = true;
   Timer? _controlsTimer;
+  late final RankingEngine _engine;
   late Stream<PostModel?> _postStream;
 
   // Double tap heart animation state
   bool _showHeartAnimation = false;
+  bool _isLandscapeLocked = false;
+  bool _isNavigatingBetweenVideos = false;
+  Offset? _portraitSwipeStart;
 
   @override
   void initState() {
     super.initState();
-    final engine = Provider.of<RankingEngine>(context, listen: false);
-    _postStream = engine.getPostStream(widget.postId);
+    _engine = Provider.of<RankingEngine>(context, listen: false);
+    _postStream = _engine.getPostStream(widget.postId);
     // Allow rotation to landscape for immersive viewing
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    if (widget.initialPost != null && widget.initialPost!.type == 'video') {
+      _initVideoController(widget.initialPost!.contentUrl);
+    }
     _startControlsTimer();
   }
 
@@ -56,8 +106,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   void didUpdateWidget(covariant PostDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.postId != widget.postId) {
-      final engine = Provider.of<RankingEngine>(context, listen: false);
-      _postStream = engine.getPostStream(widget.postId);
+      _postStream = _engine.getPostStream(widget.postId);
     }
   }
 
@@ -66,6 +115,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _controlsTimer?.cancel();
     if (_videoController != null && _loadedVideoUrl != null) {
       _videoController!.removeListener(_videoListener);
+      if (_videoController!.value.isPlaying) {
+        _videoController!.pause();
+      }
       VideoManager().releaseController(_loadedVideoUrl!);
     }
     // Restore orientation lock
@@ -93,6 +145,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
     if (_videoController != null) {
       _videoController!.removeListener(_videoListener);
+      if (_videoController!.value.isPlaying) {
+        _videoController!.pause();
+      }
       if (oldUrl != null) {
         VideoManager().releaseController(oldUrl);
       }
@@ -213,18 +268,21 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _startControlsTimer();
   }
 
-  String _formatTimeAgo(DateTime dateTime) {
-    final difference = DateTime.now().difference(dateTime);
-    if (difference.inDays >= 7) {
-      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
-    } else if (difference.inDays >= 1) {
-      return '${difference.inDays}d ago';
-    } else if (difference.inHours >= 1) {
-      return '${difference.inHours}h ago';
-    } else if (difference.inMinutes >= 1) {
-      return '${difference.inMinutes}m ago';
+  void _toggleFullscreenOrientation() {
+    setState(() {
+      _isLandscapeLocked = !_isLandscapeLocked;
+    });
+    if (_isLandscapeLocked) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
     } else {
-      return 'Just now';
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
     }
   }
 
@@ -242,17 +300,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   void _showCommentsBottomSheet(BuildContext context, RankingEngine engine) {
-    showModalBottomSheet(
+    showPostCommentsBottomSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return _CommentsBottomSheet(
-          postId: widget.postId,
-          engine: engine,
-          formatTimeAgo: _formatTimeAgo,
-        );
-      },
+      postId: widget.postId,
+      engine: engine,
     );
   }
 
@@ -274,117 +325,236 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     });
   }
 
-  void _navigateToPost(String postId) {
+  void _navigateToPost(PostModel post) {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => PostDetailScreen(postId: postId),
-      ),
-    );
-  }
-
-  void _showOptionsBottomSheet(BuildContext context, PostModel post, RankingEngine engine) {
-    final isOwner = post.userId == engine.currentUserId;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF141416),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isOwner) ...[
-              ListTile(
-                leading: const Icon(LucideIcons.pencil, color: Colors.white),
-                title: const Text('Edit post', style: TextStyle(color: Colors.white)),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => EditPostScreen(post: post),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(LucideIcons.trash2, color: Colors.red),
-                title: const Text('Delete post', style: TextStyle(color: Colors.red)),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      backgroundColor: const Color(0xFF141416),
-                      title: const Text('Delete Post', style: TextStyle(color: Colors.white)),
-                      content: const Text('Are you sure you want to delete this post?', style: TextStyle(color: Colors.white70)),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed == true) {
-                    await engine.deletePost(post.id);
-                    if (context.mounted) {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Post deleted'), behavior: SnackBarBehavior.floating, backgroundColor: Colors.green),
-                      );
-                    }
-                  }
-                },
-              ),
-              const Divider(color: Colors.white12),
-            ],
-            ListTile(
-              leading: const Icon(LucideIcons.bookmark, color: Colors.white),
-              title: const Text('Save post', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Post saved!'), behavior: SnackBarBehavior.floating),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.flag, color: Colors.white),
-              title: const Text('Report post', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Post reported'), behavior: SnackBarBehavior.floating),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.link, color: Colors.white),
-              title: const Text('Copy link', style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Link copied to clipboard!'), behavior: SnackBarBehavior.floating),
-                );
-              },
-            ),
-          ],
+        builder: (_) => ChangeNotifierProvider.value(
+          value: _engine,
+          child: PostDetailScreen(postId: post.id, initialPost: post),
         ),
       ),
     );
   }
 
+  Future<void> _handlePortraitVideoSwipe(
+    double verticalDelta,
+    PostModel currentPost,
+  ) async {
+    if (_isNavigatingBetweenVideos || verticalDelta.abs() < 60) return;
+
+    _isNavigatingBetweenVideos = true;
+    try {
+      var videos = _engine.feedPosts.where((post) => post.type == 'video').toList();
+      final currentIndex = videos.indexWhere((post) => post.id == currentPost.id);
+      if (currentIndex == -1) return;
+
+      // Swiping up advances through the feed. Fetch another page at the end
+      // so the viewer can continue through newly loaded videos.
+      if (verticalDelta < 0 && currentIndex == videos.length - 1 && _engine.hasMoreFeed) {
+        await _engine.fetchNextFeedPage();
+        videos = _engine.feedPosts.where((post) => post.type == 'video').toList();
+      }
+
+      final targetIndex = verticalDelta < 0 ? currentIndex + 1 : currentIndex - 1;
+      if (targetIndex >= 0 && targetIndex < videos.length && mounted) {
+        _navigateToPost(videos[targetIndex]);
+      }
+    } finally {
+      if (mounted) _isNavigatingBetweenVideos = false;
+    }
+  }
+
+  void _onPortraitPointerDown(PointerDownEvent event) {
+    _portraitSwipeStart = event.position;
+  }
+
+  void _onPortraitPointerUp(PointerUpEvent event, PostModel post) {
+    final start = _portraitSwipeStart;
+    _portraitSwipeStart = null;
+    if (start == null) return;
+
+    final delta = event.position - start;
+    // Accept natural diagonal swipes, but ignore horizontal drags.
+    if (delta.dy.abs() < 60 || delta.dy.abs() < delta.dx.abs() * 0.6) return;
+    _handlePortraitVideoSwipe(delta.dy, post);
+  }
+
+  void _showOptionsBottomSheet(BuildContext context, PostModel post, RankingEngine engine) {
+    final isOwner = post.userId == engine.currentUserId;
+    
+    if (kIsWeb) {
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: const Color(0xFF141416),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isOwner) ...[
+                  ListTile(
+                    leading: const Icon(LucideIcons.pencil, color: Colors.white),
+                    title: const Text('Edit post', style: TextStyle(color: Colors.white)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => EditPostScreen(post: post),
+                        ),
+                      );
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(LucideIcons.trash2, color: Colors.red),
+                    title: const Text('Delete post', style: TextStyle(color: Colors.red)),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          backgroundColor: const Color(0xFF141416),
+                          title: const Text('Delete Post', style: TextStyle(color: Colors.white)),
+                          content: const Text('Are you sure you want to delete this post?', style: TextStyle(color: Colors.white70)),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(context, true),
+                              child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed == true) {
+                        await engine.deletePost(post.id);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Post deleted'), behavior: SnackBarBehavior.floating, backgroundColor: Colors.green),
+                          );
+                        }
+                      }
+                    },
+                  ),
+                  const Divider(color: Colors.white12),
+                ],
+                ListTile(
+                  leading: const Icon(LucideIcons.flag, color: Colors.white),
+                  title: const Text('Report post', style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Post reported'), behavior: SnackBarBehavior.floating),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0xFF141416),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (context) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.4,
+            minChildSize: 0.3,
+            maxChildSize: 0.7,
+            expand: false,
+            builder: (context, scrollController) {
+              return Container(
+                decoration: const BoxDecoration(
+                  color: Color(0xFF141416),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  children: [
+                    if (isOwner) ...[
+                      ListTile(
+                        leading: const Icon(LucideIcons.pencil, color: Colors.white),
+                        title: const Text('Edit post', style: TextStyle(color: Colors.white)),
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => EditPostScreen(post: post),
+                            ),
+                          );
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(LucideIcons.trash2, color: Colors.red),
+                        title: const Text('Delete post', style: TextStyle(color: Colors.red)),
+                        onTap: () async {
+                          Navigator.pop(context);
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              backgroundColor: const Color(0xFF141416),
+                              title: const Text('Delete Post', style: TextStyle(color: Colors.white)),
+                              content: const Text('Are you sure you want to delete this post?', style: TextStyle(color: Colors.white70)),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true) {
+                            await engine.deletePost(post.id);
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Post deleted'), behavior: SnackBarBehavior.floating, backgroundColor: Colors.green),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                      const Divider(color: Colors.white12),
+                    ],
+                    ListTile(
+                      leading: const Icon(LucideIcons.flag, color: Colors.white),
+                      title: const Text('Report post', style: TextStyle(color: Colors.white)),
+                      onTap: () {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Post reported'), behavior: SnackBarBehavior.floating),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final engine = Provider.of<RankingEngine>(context, listen: false);
+    final engine = _engine;
 
     return StreamBuilder<PostModel?>(
       stream: _postStream,
@@ -446,17 +616,41 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                        post.userName.contains('Yuki') ||
                        post.userName.contains('News');
 
-    return Stack(
-      children: [
-        // 1. Media Area
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: post.type == 'video' ? _onPortraitPointerDown : null,
+      onPointerUp: post.type == 'video'
+          ? (event) => _onPortraitPointerUp(event, post)
+          : null,
+      child: Stack(
+        children: [
+        // 1. Black area Background GestureDetector (taps here keep/make controls visible)
         GestureDetector(
-          onTap: _togglePlayPause,
-          onDoubleTap: () => _triggerDoubleTapLike(engine, post),
+          onTap: () {
+            setState(() {
+              _showControls = true;
+            });
+            _startControlsTimer();
+          },
           child: Container(
             color: Colors.black,
             width: double.infinity,
             height: double.infinity,
-            child: _buildMediaContent(post),
+          ),
+        ),
+
+        // 2. Centered Media Content with exact onTap to hide/show buttons
+        Center(
+          child: AspectRatio(
+            aspectRatio: post.type == 'video' && _videoController != null && _isInitialized && _videoController!.value.aspectRatio > 0
+                ? _videoController!.value.aspectRatio
+                : 16 / 9,
+            child: GestureDetector(
+              onTap: _toggleControls,
+              onDoubleTap: () => _triggerDoubleTapLike(engine, post),
+              behavior: HitTestBehavior.opaque,
+              child: _buildMediaContent(post),
+            ),
           ),
         ),
 
@@ -482,83 +676,77 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             ),
           ),
 
-        // Play/Pause brief indicator on center tap
-        if (!_isPlaying && post.type == 'video' && _isInitialized && !_showHeartAnimation)
-          IgnorePointer(
-            child: Center(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                padding: const EdgeInsets.all(16),
-                child: const Icon(LucideIcons.play, color: Colors.white, size: 36),
-              ),
-            ),
-          ),
+
 
         // 2. Top transparent nav overlay
         Positioned(
           top: 0,
           left: 0,
           right: 0,
-          child: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.black54, Colors.transparent],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Back button
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: const BoxDecoration(
-                          color: Colors.black45,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
-                      ),
-                    ),
-                    // Options button
-                    GestureDetector(
-                      onTap: () => _showOptionsBottomSheet(context, post, engine),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: const BoxDecoration(
-                          color: Colors.black45,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.more_horiz, color: Colors.white, size: 22),
-                      ),
-                    ),
-                  ],
+          child: AnimatedOpacity(
+            opacity: _showControls ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 250),
+            child: IgnorePointer(
+              ignoring: !_showControls,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.black54, Colors.transparent],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
                 ),
-              ),
-            ),
-          ),
-        ),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Back button
+                        GestureDetector(
+                          onTap: () => Navigator.pop(context),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: const BoxDecoration(
+                              color: Colors.black45,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+                          ),
+                        ),
+                        // Options button
+                        GestureDetector(
+                          onTap: () => _showOptionsBottomSheet(context, post, engine),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: const BoxDecoration(
+                              color: Colors.black45,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.more_horiz, color: Colors.white, size: 22),
+                          ),   ),
+                          ],
+                          ),
+                          ),
+    ),
+    ),
+    ),
+    ),
+    ),
 
-        // 3. Bottom Gradient, User Details Card, and Actions row
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withOpacity(0.6),
-                  Colors.black.withOpacity(0.9),
+    // 3. Bottom Gradient, User Details Card, and Actions row
+    Positioned(
+    bottom: 0,
+    left: 0,
+    right: 0,
+    child: Container(
+    decoration: BoxDecoration(
+    gradient: LinearGradient(
+    colors: [
+    Colors.transparent,
+    Colors.black.withOpacity(0.6),
+    Colors.black.withOpacity(0.9),
+
                 ],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
@@ -684,13 +872,67 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
                   // Timeline / progress bar for video
                   if (post.type == 'video' && _videoController != null && _isInitialized) ...[
-                    _buildTimelineScrubber(false),
+                    AnimatedOpacity(
+                      opacity: _showControls ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 250),
+                      child: IgnorePointer(
+                        ignoring: !_showControls,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildTimelineScrubber(false),
+                            Row(
+                              children: [
+                                // Play / Pause Button
+                                GestureDetector(
+                                  onTap: _togglePlayPause,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                                    child: Icon(
+                                      _isPlaying ? LucideIcons.pause : LucideIcons.play,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                // Sound Button
+                                GestureDetector(
+                                  onTap: _toggleMute,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                                    child: Icon(
+                                      _isMuted ? LucideIcons.volumeX : LucideIcons.volume2,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                // Fullscreen Button
+                                GestureDetector(
+                                  onTap: _toggleFullscreenOrientation,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                                    child: Icon(
+                                      _isLandscapeLocked ? LucideIcons.minimize : LucideIcons.maximize,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 8),
                   ],
 
-                  // 5 Icon Action Bar (X Style)
+                  // Post actions
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       // Comment Action
                       GestureDetector(
@@ -707,17 +949,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           ],
                         ),
                       ),
-                      // Repost Action
-                      Row(
-                        children: [
-                          const Icon(LucideIcons.repeat, color: Colors.white, size: 20),
-                          const SizedBox(width: 6),
-                          Text(
-                            '${(post.likes.length * 0.4).round()}',
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
-                          ),
-                        ],
-                      ),
+                      const SizedBox(width: 28),
                       // Like Action
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -737,22 +969,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           ],
                         ),
                       ),
-                      // Bookmark Action
-                      GestureDetector(
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Post bookmarked!'), behavior: SnackBarBehavior.floating),
-                          );
-                        },
-                        child: const Icon(LucideIcons.bookmark, color: Colors.white, size: 20),
-                      ),
-                      // Share Action
-                      GestureDetector(
-                        onTap: () {
-                          _showOptionsBottomSheet(context, post, engine);
-                        },
-                        child: const Icon(LucideIcons.share2, color: Colors.white, size: 20),
-                      ),
                     ],
                   ),
                 ],
@@ -760,7 +976,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             ),
           ),
         ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -772,10 +989,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                        post.userName.contains('Yuki') ||
                        post.userName.contains('News');
     final handle = '@${post.userName.replaceAll(' ', '').toLowerCase()}';
-
-    // Next/Prev Post indexing
-    final currentIndex = engine.feedPosts.indexWhere((p) => p.id == post.id);
-    final hasNext = currentIndex != -1 && currentIndex < engine.feedPosts.length - 1;
 
     return Stack(
       children: [
@@ -820,44 +1033,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
             ),
           ),
 
-        // Play/Pause center overlay indicator
-        if (!_isPlaying && _isInitialized && !_showHeartAnimation)
-          Center(
-            child: GestureDetector(
-              onTap: _togglePlayPause,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                ),
-                padding: const EdgeInsets.all(16),
-                child: const Icon(LucideIcons.play, color: Colors.white, size: 36),
-              ),
-            ),
-          ),
 
-        // Swiping/Swipe next/prev navigation chevrons
-        if (_showControls) ...[
-          if (hasNext)
-            Positioned(
-              right: 16,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: GestureDetector(
-                  onTap: () => _navigateToPost(engine.feedPosts[currentIndex + 1].id),
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                      color: Colors.black38,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(LucideIcons.chevronRight, color: Colors.white, size: 28),
-                  ),
-                ),
-              ),
-            ),
-        ],
 
         // 2. Control overlays (shows when toggled)
         if (_showControls) ...[
@@ -1043,32 +1219,10 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       ),
                       const SizedBox(width: 16),
                       _buildLandscapeHorizontalButton(
-                        icon: LucideIcons.repeat,
-                        label: '${(post.likes.length * 0.4).round()}',
-                        onTap: () {},
-                      ),
-                      const SizedBox(width: 16),
-                      _buildLandscapeHorizontalButton(
                         icon: isLiked ? Icons.favorite : Icons.favorite_border,
                         color: isLiked ? AppTheme.primary : Colors.white,
                         label: '${post.likes.length}',
                         onTap: () => engine.toggleLikePost(post.id),
-                      ),
-                      const SizedBox(width: 16),
-                      _buildLandscapeHorizontalButton(
-                        icon: LucideIcons.bookmark,
-                        label: '',
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Post bookmarked!'), behavior: SnackBarBehavior.floating),
-                          );
-                        },
-                      ),
-                      const SizedBox(width: 16),
-                      _buildLandscapeHorizontalButton(
-                        icon: LucideIcons.share2,
-                        label: '',
-                        onTap: () => _showOptionsBottomSheet(context, post, engine),
                       ),
                     ],
                   ),
@@ -1286,17 +1440,17 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final isDialog = kIsWeb;
     return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
-        color: Color(0xFF141416),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      height: isDialog ? null : MediaQuery.of(context).size.height * 0.7,
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: isDialog ? BorderRadius.circular(16) : const BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Column(
-        children: [
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
           // Drag handle
           Container(
             margin: const EdgeInsets.only(top: 8, bottom: 8),
@@ -1418,9 +1572,13 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           const Divider(color: Colors.white12, height: 1),
 
           // Send comment input field
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            color: const Color(0xFF141416),
+          Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1454,7 +1612,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               ],
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

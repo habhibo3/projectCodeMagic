@@ -17,12 +17,12 @@ class BroadcastNameplate extends StatelessWidget {
 
   static const _navy = Color(0xFF051937);
   static const _gold = Color(0xFFC9A227);
-  static const _goldDark = Color(0xFF8B6914);
+  static const _goldDark = Color(0xFF1A1200);
 
   @override
   Widget build(BuildContext context) {
-    final nameSize = compact ? 9.0 : 11.0;
-    final roleSize = compact ? 6.0 : 7.0;
+    final nameSize = compact ? 13.5 : 16.5;
+    final roleSize = compact ? 9.0 : 10.5;
     final barH = compact ? 32.0 : 38.0;
 
     return Container(
