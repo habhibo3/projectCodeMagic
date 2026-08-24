@@ -22,11 +22,8 @@ workflows:
             --scheme Runner
       - name: Upload to TestFlight
         script: |
-          xcrun altool --upload-app \
-            -f build/ios/ipa/*.ipa \
-            --type ios \
-            --apiKey "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          app-store-connect publish \
+            --path build/ios/ipa/*.ipa
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
