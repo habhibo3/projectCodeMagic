@@ -23,6 +23,7 @@ workflows:
       - name: Upload to TestFlight
         script: |
           app-store-connect publish \
+            --apple-id 6772730781 \
             --path build/ios/ipa/*.ipa
     artifacts:
       - build/ios/ipa/*.ipa
