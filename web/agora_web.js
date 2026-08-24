@@ -967,15 +967,12 @@ async function startRecording(filename, useBrowserCapture = true) {
     mediaRecorder = new MediaRecorder(recordStream, options);
 
     mediaRecorder.ondataavailable = (event) => {
-      console.log('MediaRecorder ondataavailable - event.data:', event.data, 'size:', event.data ? event.data.size : 0);
       if (event.data && event.data.size > 0) {
         recordedChunks.push(event.data);
-        console.log('Added chunk, total chunks:', recordedChunks.length);
       }
     };
 
     mediaRecorder.onstop = () => {
-      console.log('MediaRecorder stopped, processing recording data...');
       _isRecordingActive = false;
       _processRecordingData();
       if (recordingCaptureStream) {
@@ -996,10 +993,8 @@ async function startRecording(filename, useBrowserCapture = true) {
     _isRecordingActive = true;
     window._recordingStartTimestamp = Date.now();
     mediaRecorder.start(250); // Collect data every 250ms for instant keyframes
-    console.log('Recording started successfully');
     return true;
   } catch (error) {
-    console.error('Error starting recording:', error);
     if (recordingCaptureStream) {
       recordingCaptureStream.getTracks().forEach(track => track.stop());
       recordingCaptureStream = null;

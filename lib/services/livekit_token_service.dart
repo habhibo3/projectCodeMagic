@@ -83,9 +83,14 @@ class LiveKitTokenService {
   Future<LiveKitRoomCredentials> getRoomCredentials({
     required String contestId,
     String? entryId,
+    String? userId,
+    bool isHost = false,
+    bool isCoHost = false,
   }) async {
     final roomName = entryId != null ? 'contest_${contestId}_$entryId' : 'station_$contestId';
-    final identity = 'user_${DateTime.now().millisecondsSinceEpoch}';
+    final rolePrefix = isHost ? 'host' : (isCoHost ? 'cohost' : 'viewer');
+    final uidStr = userId != null && userId.isNotEmpty ? userId : 'anon_${DateTime.now().millisecondsSinceEpoch}';
+    final identity = '${rolePrefix}_$uidStr';
 
     final token = createToken(
       roomName: roomName,

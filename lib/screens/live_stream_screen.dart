@@ -100,6 +100,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   bool _showChatInRightPanel = true;
   bool _isScreenShareFullScreen = false;
 
+  // Dynamic session role tracking (updated based on actual session state)
+  bool _isSessionCoHost = false; // True if current user is cohost in the session
+  bool _isSessionHost = false; // True if current user is host in the session
+
   // Stream entries & details
   ContestEntry? _selectedEntry;
   ContestEntry? _coHostEntry;
@@ -113,6 +117,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   bool get _isBroadcaster => widget.isHost || widget.isCoHost;
   bool get _isStationLive => widget.contest.type == 'Station';
   String get _stationId => StationModel.normalizeId(widget.contest.id);
+
+  // Dynamic role check based on session state (not static widget parameters)
+  bool get _amIActuallyCoHost => _isSessionCoHost || widget.isCoHost;
+  bool get _amIActuallyHost => _isSessionHost || widget.isHost;
 
   StreamSubscription? _sessionSub;
   StreamSubscription? _organizerProfileSub;
@@ -147,6 +155,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   // listener fire a pop() at the same time.
   bool _isLeaving = false;
   bool _stationEndRequested = false;
+
+  // Timer to force host-only view if cohost disconnects but Firestore doesn't update
+  Timer? _cohostDisconnectTimer;
 
   @override
   void initState() {
@@ -200,8 +211,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           setState(() => _viewerCount = count);
         }
       });
-    } else if (widget.isHost) {
+    } else {
       // Contest organizer mode - track viewer count for organizer session
+      if (!widget.isHost) {
+        _liveSessionService.incrementOrganizerViewerCount(widget.contest.id);
+      }
       _liveSessionService.watchOrganizerViewerCount(widget.contest.id).listen((count) {
         if (mounted) {
           setState(() => _viewerCount = count);
@@ -372,17 +386,29 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final coHostUserId = session['coHostUserId'] as String?;
       final coHostName = session['coHostName'] as String?;
       final coHostAvatar = session['coHostAvatar'] as String?;
-      debugPrint('[LiveStream] _listenOrganizerLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}');
+      debugPrint('[LiveStream] _listenOrganizerLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost, _currentUserId=$_currentUserId');
 
       if (hostUserId != null) _hostUserId = hostUserId;
       if (status == 'live' && !_hasEverBeenLive) {
         setState(() => _hasEverBeenLive = true);
       }
 
-      // Mirror the same co-host handling logic used in _listenLiveSession
+      // Update dynamic role tracking
+      if (_currentUserId != null) {
+        final wasCoHost = _isSessionCoHost;
+        final wasHost = _isSessionHost;
+        _isSessionHost = (hostUserId == _currentUserId);
+        _isSessionCoHost = (coHostUserId == _currentUserId);
+
+        if (wasCoHost != _isSessionCoHost || wasHost != _isSessionHost) {
+          debugPrint('[LiveStream] Role changed: wasHost=$wasHost -> $_isSessionHost, wasCoHost=$wasCoHost -> $_isSessionCoHost');
+        }
+      }
+
+      // ── Co-host state management ──────────────────────────────────────────
       if (status == 'live' && coHostUserId != null) {
         _hasEverBeenLive = true;
-        _coHostSessionConfirmed = true; // confirmed: session has a real cohost
+        _coHostSessionConfirmed = true;
         debugPrint('[LiveStream] Session LIVE with cohost — _hasEverBeenLive=true');
         setState(() {
           _isCoHostConnected = true;
@@ -398,27 +424,27 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             type: 'video',
             caption: '',
           );
-          _cameraView = CameraView.splitBoth;
+          if (_cameraView == CameraView.hostOnly) {
+            _cameraView = CameraView.splitBoth;
+          }
         });
       } else if (status == 'live' && coHostUserId == null && _isCoHostConnected) {
-        // Co-host left voluntarily — but only act on this if we've CONFIRMED
-        // the co-host session was live at least once (prevents false-trigger on
-        // the first stale snapshot that arrives before coHostUserId is written).
-        if (!_coHostSessionConfirmed) {
-          debugPrint('[LiveStream] Organizer: ignoring stale live+null snapshot (session not yet confirmed)');
-        } else {
-          debugPrint('[LiveStream] Organizer: cohost left, reverting to single-host view');
-          setState(() {
-            _isCoHostConnected = false;
-            _remoteUid = null;
-            _coHostEntry = null;
-            _cameraView = CameraView.hostOnly;
-          });
-          // Co-host was pushed via root navigator — single pop() is correct.
-          if (widget.isCoHost && !_isLeaving) {
-            _isLeaving = true;
-            Navigator.of(context).pop();
-          }
+        // Co-host left — revert to single host view for everyone
+        debugPrint('[LiveStream] Organizer: cohost left, forcing host-only view for ALL users');
+        setState(() {
+          _isCoHostConnected = false;
+          _remoteUid = null;
+          _coHostEntry = null;
+          _cameraView = CameraView.hostOnly;
+          _coHostSessionConfirmed = false;
+        });
+        if (widget.isHost) {
+          _updateSessionLayout();
+        }
+        if (_amIActuallyCoHost && !_isLeaving) {
+          _isLeaving = true;
+          debugPrint('[LiveStream] Organizer: cohost leaving - navigating home');
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
         }
       } else if (status == 'invited') {
         setState(() {
@@ -436,60 +462,35 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         });
       }
 
-      // Real-time layout state syncing for non-hosts
-      if (!widget.isHost) {
-        final isSplit = session['isSplitScreen'] as bool?;
-        final camViewStr = session['cameraView'] as String?;
-        final showChat = session['showChatInRightPanel'] as bool?;
-        final screenShareFullScreen = session['isScreenShareFullScreen'] as bool?;
-
-        setState(() {
-          if (isSplit != null) {
-            _isSplitScreen = isSplit;
-          }
-          if (camViewStr != null) {
-            try {
-              final synced = CameraView.values.firstWhere((e) => e.name == camViewStr);
-              _cameraView = synced;
-            } catch (_) {}
-          }
-          if (showChat != null) {
-            _showChatInRightPanel = showChat;
-          }
-          if (screenShareFullScreen != null) {
-            _isScreenShareFullScreen = screenShareFullScreen;
-          }
-        });
-      } else if (status == 'idle') {
-        // Host ended the live — kick everyone (co-host AND viewers)
+      // ── IDLE: host ended the live — kick ALL non-host users to home ────────
+      // NOTE: This block MUST be independent (not inside any if/else branch)
+      // so that viewers AND co-hosts are correctly redirected when the host leaves.
+      if (status == 'idle') {
         setState(() {
           _isCoHostConnected = false;
           _remoteUid = null;
           _coHostEntry = null;
           _cameraView = CameraView.hostOnly;
         });
+
+        // Only redirect after the session has actually been live (prevents stale idle on join)
         final elapsed = DateTime.now().difference(_screenCreatedAt);
         if (_hasEverBeenLive || elapsed.inSeconds > 5) {
-          if (widget.isCoHost && !_isLeaving) {
-            // Co-host was pushed via root navigator — single pop() is correct.
-            debugPrint('[LiveStream] Organizer ended live — co-host popping (isCoHost=true)');
+          if (!widget.isHost && !_isLeaving) {
+            // Both viewers AND co-hosts navigate home when host ends the station live
+            debugPrint('[LiveStream] Station ended — non-host user navigating to HOME (isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost)');
             _isLeaving = true;
-            Navigator.of(context).pop();
-          } else if (!widget.isHost && !widget.isCoHost) {
-            // Viewers use nested navigator — popUntil(isFirst) is correct.
-            debugPrint('[LiveStream] Organizer ended live — viewer navigating to HOME');
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
           }
         }
       }
 
-      // Sync layout states in real-time for non-hosts
-      if (!widget.isHost) {
+      // ── Layout sync for non-hosts ─────────────────────────────────────────
+      if (!widget.isHost && status != 'idle') {
         final isSplit = session['isSplitScreen'] as bool?;
         final camViewStr = session['cameraView'] as String?;
         final showChat = session['showChatInRightPanel'] as bool?;
         final screenShareFullScreen = session['isScreenShareFullScreen'] as bool?;
-        final selEntryId = session['selectedEntryId'] as String?;
 
         setState(() {
           if (isSplit != null) {
@@ -498,8 +499,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           if (camViewStr != null) {
             try {
               final synced = CameraView.values.firstWhere((e) => e.name == camViewStr);
-              // Co-host always sees at least splitBoth — never downgrade them to hostOnly
-              if (widget.isCoHost && synced == CameraView.hostOnly) {
+              if (_isCoHostConnected && synced == CameraView.hostOnly) {
                 _cameraView = CameraView.splitBoth;
               } else {
                 _cameraView = synced;
@@ -525,7 +525,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                 contentUrl: widget.contest.image,
                 type: widget.contest.coverType,
                 caption: widget.contest.title,
-          totalVotes: _stationTotalVotes,
+                totalVotes: _stationTotalVotes,
                 averageRating: widget.contest.rating,
                 reviewCount: widget.contest.reviewCount,
               );
@@ -568,19 +568,36 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final coHostAvatar = session['coHostAvatar'] as String?;
       final coHostUserId = session['coHostUserId'] as String?;
       if (hostUserId != null) _hostUserId = hostUserId;
-      debugPrint('[LiveStream] _listenLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}');
+      debugPrint('[LiveStream] _listenLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost, _currentUserId=$_currentUserId');
 
       if (status == 'live' && !_hasEverBeenLive) {
         setState(() => _hasEverBeenLive = true);
       }
 
+      // Update dynamic role tracking
+      if (_currentUserId != null) {
+        final wasCoHost = _isSessionCoHost;
+        final wasHost = _isSessionHost;
+        _isSessionHost = (hostUserId == _currentUserId);
+        _isSessionCoHost = (coHostUserId == _currentUserId);
+
+        if (wasCoHost != _isSessionCoHost || wasHost != _isSessionHost) {
+          debugPrint('[LiveStream] Role changed: wasHost=$wasHost -> $_isSessionHost, wasCoHost=$wasCoHost -> $_isSessionCoHost');
+        }
+      }
+
       if (status == 'idle') {
-        final elapsed = DateTime.now().difference(_screenCreatedAt);
-        if (_hasEverBeenLive && elapsed > const Duration(seconds: 2)) {
-          debugPrint('[LiveStream] Co-host being kicked to HOME screen (hasEverBeenLive=$_hasEverBeenLive, elapsed=${elapsed.inMilliseconds}ms)');
-          Navigator.of(context).popUntil((route) => route.isFirst);
+        // Kick cohost and viewers to HOME immediately when session goes idle
+        if (_amIActuallyCoHost && !_isLeaving) {
+          debugPrint('[LiveStream] Co-host kicked immediately in _listenLiveSession (amIActuallyCoHost=$_amIActuallyCoHost)');
+          _isLeaving = true;
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        } else if (!widget.isHost && !widget.isCoHost && !_isLeaving) {
+          debugPrint('[LiveStream] Session idle in _listenLiveSession - viewer navigating to HOME');
+          _isLeaving = true;
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
         } else {
-          debugPrint('[LiveStream] IGNORING stale idle (co-host just arrived ${elapsed.inMilliseconds}ms ago, waiting for live status)');
+          debugPrint('[LiveStream] Session idle in _listenLiveSession - not kicking (isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _isLeaving=$_isLeaving)');
         }
       }
 
@@ -599,8 +616,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           if (camViewStr != null) {
             try {
               final synced = CameraView.values.firstWhere((e) => e.name == camViewStr);
-              // Co-host always sees at least splitBoth — never downgrade them to hostOnly
-              if (widget.isCoHost && synced == CameraView.hostOnly) {
+              // Override to splitBoth if cohost is actually connected (for both cohost and viewers)
+              if (_isCoHostConnected && synced == CameraView.hostOnly) {
                 _cameraView = CameraView.splitBoth;
               } else {
                 _cameraView = synced;
@@ -653,7 +670,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       if (status == 'live' && coHostUserId != null) {
         _hasEverBeenLive = true;
         _coHostSessionConfirmed = true; // confirmed: session has a real cohost
-        debugPrint('[LiveStream] Session LIVE with cohost — _hasEverBeenLive=true');
+        debugPrint('[LiveStream] Session LIVE with cohost — _hasEverBeenLive=true, forcing split screen for ALL users including viewers');
         setState(() {
           _isCoHostConnected = true;
           _remoteUid = widget.isHost ? kCoHostAgoraUid : (widget.isCoHost ? kHostAgoraUid : null);
@@ -668,48 +685,54 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             type: 'video',
             caption: '',
           );
-          if (_cameraView == CameraView.hostOnly && (widget.isHost || widget.isCoHost)) {
+          // Force split screen for ALL users when cohost is present
+          if (_cameraView == CameraView.hostOnly) {
             _cameraView = CameraView.splitBoth;
           }
         });
       } else if (status == 'live' && coHostUserId == null && _isCoHostConnected) {
-        // Co-host left voluntarily — only act if session was confirmed live at least once
-        if (!_coHostSessionConfirmed) {
-          debugPrint('[LiveStream] Contestant: ignoring stale live+null snapshot (session not yet confirmed)');
-        } else {
-          debugPrint('[LiveStream] Contestant: cohost left, reverting to single-host view');
-          setState(() {
-            _isCoHostConnected = false;
-            _remoteUid = null;
-            _coHostEntry = null;
-            _cameraView = CameraView.hostOnly;
-          });
-          if (widget.isCoHost && !_isLeaving) {
-            _isLeaving = true;
-            Navigator.of(context).pop();
-          }
+        // Co-host left — force host-only view immediately for ALL users
+        debugPrint('[LiveStream] Contestant: cohost left (coHostUserId is null), forcing host-only view for ALL users');
+        setState(() {
+          _isCoHostConnected = false;
+          _remoteUid = null;
+          _coHostEntry = null;
+          _cameraView = CameraView.hostOnly;
+          _coHostSessionConfirmed = false; // Reset confirmation state
+        });
+        // Force session layout update to sync to all viewers
+        if (widget.isHost) {
+          _updateSessionLayout();
         }
+        // Co-host navigation: navigate to home immediately
+        if (_amIActuallyCoHost && !_isLeaving) {
+          _isLeaving = true;
+          debugPrint('[LiveStream] Contestant: cohost leaving - navigating to home (amIActuallyCoHost=$_amIActuallyCoHost)');
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        }
+        // Viewers and host- should see host-only view immediately
+        debugPrint('[LiveStream] Contestant: forcing host-only view for all users');
       } else if (status == 'idle') {
-        debugPrint('[LiveStream] Session IDLE — resetting cohost state. isCoHost=${widget.isCoHost}, _hasEverBeenLive=$_hasEverBeenLive');
+        debugPrint('[LiveStream] Session IDLE — resetting cohost state. isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost, _hasEverBeenLive=$_hasEverBeenLive, isStation=$_isStationLive');
         setState(() {
           _isCoHostConnected = false;
           _remoteUid = null;
           _coHostEntry = null;
           _cameraView = CameraView.hostOnly;
         });
-        // Kick cohost to HOME — but ONLY if they've actually been in a live
-        // session before. On re-invite, Firestore's snapshot initially returns
-        // the stale 'idle' value from the previous kick. We skip that stale
-        // snapshot by checking _hasEverBeenLive or a 5-second grace period.
-        if (widget.isCoHost) {
-          final elapsed = DateTime.now().difference(_screenCreatedAt);
-          if ((_hasEverBeenLive || elapsed.inSeconds > 5) && !_isLeaving) {
-            debugPrint('[LiveStream] Co-host kicked (hasEverBeenLive=$_hasEverBeenLive)');
-            _isLeaving = true;
-            Navigator.of(context).pop();
-          } else {
-            debugPrint('[LiveStream] IGNORING stale idle (co-host just arrived ${elapsed.inMilliseconds}ms ago)');
-          }
+        // Kick cohost to HOME immediately when session goes idle
+        // This handles both host ending live and cohost being dropped
+        if (_amIActuallyCoHost && !_isLeaving) {
+          debugPrint('[LiveStream] Co-host kicked immediately (amIActuallyCoHost=$_amIActuallyCoHost)');
+          _isLeaving = true;
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        } else if (!widget.isHost && !widget.isCoHost && !_isLeaving) {
+          // Viewers should also navigate to home when session goes idle
+          debugPrint('[LiveStream] Session idle - viewer navigating to HOME');
+          _isLeaving = true;
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+        } else {
+          debugPrint('[LiveStream] Session idle - not kicking (isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _isLeaving=$_isLeaving)');
         }
       } else if (status == 'invited') {
         setState(() {
@@ -923,6 +946,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final credentials = await LiveKitTokenService().getRoomCredentials(
         contestId: widget.contest.id,
         entryId: _entryId,
+        userId: _currentUserId,
+        isHost: widget.isHost,
+        isCoHost: widget.isCoHost,
       );
 
       if (credentials.participantToken.isEmpty) {
@@ -934,13 +960,105 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final room = Room();
       room.addListener(_onLiveKitRoomChanged);
       
-      // Auto-start and enable all remote audio tracks (e.g. Co-Host voice)
-      room.events.listen((event) {
+      // Auto-start audio and trigger UI rebuilds on remote participant & track state changes
+      room.events.listen((event) async {
+        debugPrint('[LiveKit] Room event received: ${event.runtimeType}');
         if (event is TrackSubscribedEvent) {
           if (event.track is AudioTrack) {
             debugPrint('[LiveKit] Remote audio track subscribed from ${event.participant.identity}');
-            try { event.track.start(); } catch(e) {}
+            try { event.track.start(); } catch (e) {}
           }
+          if (mounted) setState(() {});
+        } else if (event is DataReceivedEvent) {
+          // Handle force disconnect signal from host
+          try {
+            final data = utf8.decode(event.data);
+            final signal = jsonDecode(data) as Map<String, dynamic>;
+            if (signal['type'] == 'force_disconnect') {
+              debugPrint('[LiveKit] Received force disconnect signal from host: ${signal['reason']}');
+              if (signal['reason'] == 'host_ended_live' && !_isLeaving) {
+                debugPrint('[LiveKit] Host ended live, disconnecting immediately');
+                _isLeaving = true;
+                await room.disconnect();
+                Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+              } else if (signal['reason'] == 'dropped_by_host' && _amIActuallyCoHost && !_isLeaving) {
+                debugPrint('[LiveKit] Cohost dropped by host, disconnecting immediately');
+                _isLeaving = true;
+                await room.disconnect();
+                Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+              }
+            }
+          } catch (e) {
+            debugPrint('[LiveKit] Error processing data signal: $e');
+          }
+        } else if (event is ParticipantDisconnectedEvent) {
+          final participantIdentity = event.participant.identity;
+          debugPrint('[LiveKit] Participant disconnected: $participantIdentity, amIActuallyHost=$_amIActuallyHost, _isCoHostConnected=$_isCoHostConnected');
+          
+          // Check if this is the cohost disconnecting (cohost_ prefix)
+          final isCohostDisconnect = participantIdentity.startsWith('cohost_');
+          // Check if this is the host disconnecting (host_ prefix)
+          final isHostDisconnect = participantIdentity.startsWith('host_');
+          
+          // If host and cohost disconnects, force host-only view immediately
+          if (_amIActuallyHost && isCohostDisconnect && _isCoHostConnected) {
+            debugPrint('[LiveKit] Host detected cohost disconnect, forcing host-only view');
+            setState(() {
+              _isCoHostConnected = false;
+              _remoteUid = null;
+              _coHostEntry = null;
+              _cameraView = CameraView.hostOnly;
+              _coHostSessionConfirmed = false;
+            });
+            _updateSessionLayout();
+            // Also update Firestore to remove cohost
+            _disconnectCoHost();
+          }
+          // If cohost and host disconnects, navigate away
+          if (_amIActuallyCoHost && isHostDisconnect) {
+            debugPrint('[LiveKit] Cohost detected host disconnect, navigating away');
+            if (!_isLeaving) {
+              _isLeaving = true;
+              Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+            }
+          }
+          // If viewer and host disconnects, navigate away
+          if (!widget.isHost && !widget.isCoHost && isHostDisconnect) {
+            debugPrint('[LiveKit] Viewer detected host disconnect, navigating away');
+            if (!_isLeaving) {
+              _isLeaving = true;
+              Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+            }
+          }
+          // Viewers disconnecting should not affect the live session
+          if (participantIdentity.startsWith('viewer_')) {
+            debugPrint('[LiveKit] Viewer disconnected, no action needed');
+          }
+          if (mounted) setState(() {});
+        } else if (event is ParticipantConnectedEvent) {
+          final participantIdentity = event.participant.identity;
+          debugPrint('[LiveKit] Participant connected: $participantIdentity');
+          
+          // If cohost connects, ensure all users detect and update UI
+          if (participantIdentity.startsWith('cohost_')) {
+            debugPrint('[LiveKit] Cohost connected, ensuring split screen for ALL users');
+            // Force UI update to show split screen for ALL users
+            if (mounted) {
+              setState(() {
+                _isCoHostConnected = true;
+                _coHostSessionConfirmed = true;
+                // Force split screen regardless of user role
+                if (_cameraView == CameraView.hostOnly) {
+                  _cameraView = CameraView.splitBoth;
+                }
+              });
+            }
+          }
+        } else if (event is TrackPublishedEvent ||
+                   event is TrackUnsubscribedEvent ||
+                   event is TrackMutedEvent ||
+                   event is TrackUnmutedEvent) {
+          if (mounted) setState(() {});
         }
       });
 
@@ -951,7 +1069,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           adaptiveStream: true,
           dynacast: true,
         ),
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 45));
 
       // Start any existing remote audio tracks
       for (final participant in room.remoteParticipants.values) {
@@ -1060,21 +1178,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           _updateSessionLayout();
           // If cohost left via Agora, also update Firestore session to idle
           if (remoteUid == kCoHostAgoraUid) {
-            debugPrint('[LiveStream] Web: Co-host left via Agora, updating Firestore session to idle');
+            debugPrint('[LiveStream] Web: Co-host left via Agora, removing co-host from session');
             _disconnectCoHost();
           }
         }
 
-        // Co-host was pushed via root navigator — single pop() is correct.
-        if (widget.isCoHost && remoteUid == kHostAgoraUid && !_isLeaving) {
-          debugPrint('[LiveStream] Web: Host went offline — co-host popping');
-          _isLeaving = true;
-          Navigator.of(context).pop();
-        }
+        // Note: Co-host navigation is handled by Firestore listener only
+        // to avoid race conditions and double-navigation
         // Kick viewers out if host goes offline
         if (!widget.isHost && !widget.isCoHost && remoteUid == kHostAgoraUid) {
           debugPrint('[LiveStream] Web: Host went offline — viewer navigating to HOME');
-          Navigator.of(context).popUntil((route) => route.isFirst);
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
         }
       });
 
@@ -1171,20 +1285,16 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             _updateSessionLayout();
             // If cohost left via Agora, also update Firestore session to 'idle'
             if (remoteUid == kCoHostAgoraUid) {
-              debugPrint('[LiveStream] Mobile: Co-host left via Agora, updating Firestore session to idle');
+              debugPrint('[LiveStream] Mobile: Co-host left via Agora, removing co-host from session');
               _disconnectCoHost();
             }
           }
-          // Co-host was pushed via root navigator — single pop() is correct.
-          if (widget.isCoHost && remoteUid == kHostAgoraUid && !_isLeaving) {
-            debugPrint('[LiveStream] Mobile: Host went offline — co-host popping');
-            _isLeaving = true;
-            Navigator.of(context).pop();
-          }
+          // Note: Co-host navigation is handled by Firestore listener only
+          // to avoid race conditions and double-navigation
           // Kick viewers out if host goes offline
           if (!widget.isHost && !widget.isCoHost && remoteUid == kHostAgoraUid) {
             debugPrint('[LiveStream] Mobile: Host went offline — viewer navigating to HOME');
-            Navigator.of(context).popUntil((route) => route.isFirst);
+            Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
           }
         },
         onConnectionStateChanged: (RtcConnection connection, ConnectionStateType state, ConnectionChangedReasonType reason) {
@@ -1277,7 +1387,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    debugPrint('[LiveStream] dispose — role=${widget.isHost ? "HOST" : widget.isCoHost ? "COHOST" : "VIEWER"}, activeScreens=$_activeScreenCount');
+    debugPrint('[LiveStream] dispose — widgetRole=${widget.isHost ? "HOST" : widget.isCoHost ? "COHOST" : "VIEWER"}, sessionRole=${_amIActuallyHost ? "HOST" : _amIActuallyCoHost ? "COHOST" : "VIEWER"}, activeScreens=$_activeScreenCount');
 
     _sessionSub?.cancel();
     _stationVotesSub?.cancel();
@@ -1285,20 +1395,62 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     _countdownSub?.cancel();
     _recordingTimer?.cancel();
     _countdownTimer?.cancel();
+    _cohostDisconnectTimer?.cancel();
 
-    // 1. Finalize active station recording FIRST if host
+    // 1. For station live hosts, send force disconnect signal to all users immediately
+    // This ensures users are kicked immediately regardless of recording upload
+    if (_amIActuallyHost && _isStationLive && _liveKitRoom != null) {
+      debugPrint('[LiveStream] dispose — Station live host sending force disconnect signal to all users');
+      try {
+        final signal = jsonEncode({
+          'type': 'force_disconnect',
+          'reason': 'host_ended_live',
+        });
+        _liveKitRoom!.localParticipant?.publishData(
+          Uint8List.fromList(utf8.encode(signal)),
+          reliable: true,
+        );
+        debugPrint('[LiveStream] dispose — Sent force disconnect signal to all station live users');
+      } catch (e) {
+        debugPrint('[LiveStream] dispose — Error sending disconnect signal: $e');
+      }
+    }
+
+    // 2. For cohosts, disconnect LiveKit FIRST to ensure immediate session cleanup
+    if (_amIActuallyCoHost) {
+      debugPrint('[LiveStream] dispose — Cohost disconnecting LiveKit first');
+      final liveKitRoom = _liveKitRoom;
+      if (liveKitRoom != null) {
+        try {
+          liveKitRoom.removeListener(_onLiveKitRoomChanged);
+          final localParticipant = liveKitRoom.localParticipant;
+          if (localParticipant != null) {
+            unawaited(localParticipant.setCameraEnabled(false));
+            unawaited(localParticipant.setMicrophoneEnabled(false));
+            unawaited(localParticipant.unpublishAllTracks());
+          }
+          unawaited(liveKitRoom.disconnect());
+          unawaited(liveKitRoom.dispose());
+          debugPrint('[LiveStream] dispose — Cohost LiveKit disconnected');
+        } catch (e) {
+          debugPrint('[LiveStream] dispose — error during cohost LiveKit cleanup: $e');
+        }
+      }
+    }
+
+    // 3. Finalize active station recording if host (this happens AFTER users are kicked)
     final isSavingStationRecording = _isStationLive && widget.isHost;
     if (isSavingStationRecording) {
-      debugPrint('[LiveStream] dispose — saving Station Live recording before room teardown');
+      debugPrint('[LiveStream] dispose — saving Station Live recording after users kicked');
       _saveStationRecording(widget.contest.id);
     } else if (_isRecording) {
       debugPrint('[LiveStream] dispose — auto-saving active contest recording');
       _stopRecording(isAutoSave: true);
     }
 
-    // 2. Only unpublish & release tracks immediately if NOT saving station recording
+    // 3. Only unpublish & release tracks immediately if NOT saving station recording
     // (If saving station recording, _saveStationRecording will release tracks after reading recorded bytes)
-    if (!isSavingStationRecording) {
+    if (!isSavingStationRecording && !_amIActuallyCoHost) {
       final liveKitRoom = _liveKitRoom;
       if (liveKitRoom != null) {
         try {
@@ -1328,8 +1480,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     }
 
     // 3. Reset Firestore session state
-    if (widget.isHost && (_isStationLive || _liveKitInitialized || _hasEverBeenLive)) {
-      debugPrint('[LiveStream] dispose — HOST cleaning up Firestore session for contest=${widget.contest.id}, entryId=$_entryId');
+    if (_amIActuallyHost && (_isStationLive || _liveKitInitialized || _hasEverBeenLive)) {
+      debugPrint('[LiveStream] dispose — HOST cleaning up Firestore session for contest=${widget.contest.id}, entryId=$_entryId, amIActuallyHost=$_amIActuallyHost');
       try {
         final liveService = LiveSessionService();
         if (_entryId != null) {
@@ -1341,6 +1493,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           liveService.clearLiveComments(widget.contest.id, _channelId);
         } else if (_isStationLive) {
           _endStationLive();
+          // Use the same organizer session ending as contest live to kick all users
+          liveService.endOrganizerSession(widget.contest.id);
         } else {
           liveService.endOrganizerSession(widget.contest.id);
         }
@@ -1349,15 +1503,25 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       }
     }
 
-    if (widget.isCoHost) {
-      debugPrint('[LiveStream] dispose — COHOST leaving, removing from session');
+    if (_amIActuallyCoHost) {
+      debugPrint('[LiveStream] dispose — COHOST leaving, removing from session (amIActuallyCoHost=$_amIActuallyCoHost)');
       try {
         final liveService = LiveSessionService();
-        liveService.removeCoHostFromSession(
-          contestId: widget.contest.id,
-          entryId: _entryId,
-          inviteId: _activeInviteId,
-        );
+        // Force the session update to happen immediately
+        if (_isStationLive) {
+          liveService.removeCoHostFromSession(
+            contestId: widget.contest.id,
+            entryId: _entryId,
+            inviteId: _activeInviteId,
+          );
+        } else {
+          // For contests, also remove cohost
+          liveService.removeCoHostFromSession(
+            contestId: widget.contest.id,
+            entryId: _entryId,
+            inviteId: _activeInviteId,
+          );
+        }
       } catch (e) {
         debugPrint('[LiveStream] dispose — Error removing cohost from session: $e');
       }
@@ -1367,6 +1531,15 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       _liveSessionService.decrementViewerCount(widget.contest.id, _entryId!);
     } else if (_isStationLive && !widget.isHost) {
       _liveSessionService.decrementStationLiveViewerCount(_stationId);
+    } else if (!widget.isHost) {
+      // Contest organizer mode - decrement viewer count for non-host users
+      _liveSessionService.decrementOrganizerViewerCount(widget.contest.id);
+    } else if (_isStationLive && widget.isHost) {
+      // Host should also decrement viewer count when leaving station live
+      _liveSessionService.decrementStationLiveViewerCount(_stationId);
+    } else if (widget.isHost) {
+      // Contest organizer host should also decrement viewer count
+      _liveSessionService.decrementOrganizerViewerCount(widget.contest.id);
     }
 
     debugPrint('[LiveStream] dispose — LiveKit room cleanup completed.');
@@ -1837,17 +2010,44 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   Future<void> _disconnectCoHost() async {
     // Works in both Contestant Mode (_entryId set) and Organizer Mode (_entryId null)
-    debugPrint('[LiveStream] _disconnectCoHost — kicking cohost, entryId=$_entryId');
+    debugPrint('[LiveStream] _disconnectCoHost — kicking cohost, entryId=$_entryId, inviteId=$_activeInviteId');
+    
+    // Force cohost to disconnect from LiveKit by sending them a signal
+    if (_liveKitRoom != null) {
+      try {
+        // Send a data message to the cohost to force them to disconnect
+        final signal = jsonEncode({
+          'type': 'force_disconnect',
+          'reason': 'dropped_by_host',
+        });
+        _liveKitRoom!.localParticipant?.publishData(
+          Uint8List.fromList(utf8.encode(signal)),
+          reliable: true,
+        );
+        debugPrint('[LiveStream] _disconnectCoHost — Sent force disconnect signal to cohost');
+      } catch (e) {
+        debugPrint('[LiveStream] _disconnectCoHost — Error sending disconnect signal: $e');
+      }
+    }
+    
+    // Update Firestore session
     final engine = Provider.of<RankingEngine>(context, listen: false);
-    await engine.endCoHostSession(_entryId, inviteId: _activeInviteId);
-    debugPrint('[LiveStream] _disconnectCoHost — Firestore session set to idle');
+    await engine.removeCoHostFromSession(_entryId, inviteId: _activeInviteId);
+    debugPrint('[LiveStream] _disconnectCoHost — Firestore cohost removed, session status kept live');
+    
     setState(() {
       _isCoHostConnected = false;
       _remoteUid = null;
       _coHostEntry = null;
       _cameraView = CameraView.hostOnly;
       _activeInviteId = null;
+      _coHostSessionConfirmed = false;
     });
+    
+    // Force session layout update to sync to all viewers
+    _updateSessionLayout();
+    
+    debugPrint('[LiveStream] _disconnectCoHost — completed, cohost should be kicked and viewers should see host-only');
   }
 
   /// Real joined users only — no seed demo accounts, never yourself.
@@ -2444,7 +2644,39 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           left: 8,
           child: IconButton(
             icon: const Icon(LucideIcons.arrowLeft, color: Colors.white70, size: 24),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () async {
+              debugPrint('[LiveStream] Back button pressed - amIActuallyCoHost=$_amIActuallyCoHost, widget.isCoHost=${widget.isCoHost}, _isLeaving=$_isLeaving');
+              if (_amIActuallyCoHost && !_isLeaving) {
+                _isLeaving = true;
+                debugPrint('[LiveStream] Back button pressed - cohost leaving, forcing Firestore update and navigation');
+                // Force immediate Firestore update to remove cohost
+                try {
+                  final liveService = LiveSessionService();
+                  liveService.removeCoHostFromSession(
+                    contestId: widget.contest.id,
+                    entryId: _entryId,
+                    inviteId: _activeInviteId,
+                  );
+                  debugPrint('[LiveStream] Back button - Firestore cohost removal completed');
+                } catch (e) {
+                  debugPrint('[LiveStream] Back button - Error removing cohost from Firestore: $e');
+                }
+                // Disconnect from LiveKit immediately
+                final room = _liveKitRoom;
+                if (room != null) {
+                  try {
+                    await room.disconnect();
+                    debugPrint('[LiveStream] Back button - LiveKit disconnected');
+                  } catch (e) {
+                    debugPrint('[LiveStream] Back button - Error disconnecting LiveKit: $e');
+                  }
+                }
+                // Direct navigation to home screen without pop
+                Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+              } else {
+                Navigator.pop(context);
+              }
+            },
           ),
         ),
 
@@ -2768,15 +3000,34 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Participant? _findLiveKitParticipant({required bool isHost, required Room room}) {
-    final expectedUserId = isHost ? _hostUserId : _coHostEntry?.userId;
-    if (expectedUserId != null) {
+    final hostId = _hostUserId ?? widget.contest.creatorId;
+    final coHostId = _coHostEntry?.userId;
+
+    if (isHost) {
+      // Look for participant with host_ prefix or hostId
       for (final participant in room.remoteParticipants.values) {
-        if (participant.identity == expectedUserId) return participant;
+        if (participant.identity.startsWith('host_') ||
+            (hostId.isNotEmpty && participant.identity.contains(hostId))) {
+          return participant;
+        }
       }
+      // Fallback: return participant that is not cohost or viewer
+      for (final participant in room.remoteParticipants.values) {
+        if (!participant.identity.startsWith('cohost_') && !participant.identity.startsWith('viewer_')) {
+          return participant;
+        }
+      }
+      return null;
+    } else {
+      // Look for participant with cohost_ prefix or coHostId — NEVER return the Host!
+      for (final participant in room.remoteParticipants.values) {
+        if (participant.identity.startsWith('cohost_') ||
+            (coHostId != null && coHostId.isNotEmpty && participant.identity.contains(coHostId))) {
+          return participant;
+        }
+      }
+      return null;
     }
-    return room.remoteParticipants.values.isEmpty
-        ? null
-        : room.remoteParticipants.values.first;
   }
 
   Widget _buildCameraOffFallback({required String name, required String subtitle, String? avatar}) {
@@ -3189,7 +3440,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             const SizedBox(width: 12),
 
             // Action button (Invite/Drop for Host, Leave Co-Host for Co-host)
-            if (widget.isHost)
+            if (_amIActuallyHost)
               GestureDetector(
                 onTap: () {
                   if (_isCoHostConnected) {
@@ -3228,25 +3479,44 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                   ),
                 ),
               )
-            else if (widget.isCoHost)
+            else if (_amIActuallyCoHost)
               GestureDetector(
                 onTap: () async {
                   final engine = Provider.of<RankingEngine>(context, listen: false);
                   final navigator = Navigator.of(context);
                   if (_isLeaving) return; // prevent double-tap
                   _isLeaving = true;
+                  debugPrint('[LiveStream] Manual leave button pressed - amIActuallyCoHost=$_amIActuallyCoHost');
                   // Auto-save recording before leaving
                   if (_isRecording) {
                     _stopRecording(isAutoSave: false);
                     await Future.delayed(const Duration(milliseconds: 500));
                   }
-                  // Notify host session: cohost leaving, revert to single-host
-                  await engine.removeCoHostFromSession(_entryId, inviteId: _activeInviteId);
+                  // Force immediate Firestore update to remove cohost
+                  try {
+                    await engine.removeCoHostFromSession(_entryId, inviteId: _activeInviteId);
+                    debugPrint('[LiveStream] Manual leave - Firestore cohost removal completed');
+                  } catch (e) {
+                    debugPrint('[LiveStream] Manual leave - Error removing cohost from Firestore: $e');
+                  }
+                  // Disconnect from LiveKit immediately
+                  final room = _liveKitRoom;
+                  if (room != null) {
+                    try {
+                      await room.disconnect();
+                      debugPrint('[LiveStream] Manual leave - LiveKit disconnected');
+                    } catch (e) {
+                      debugPrint('[LiveStream] Manual leave - Error disconnecting LiveKit: $e');
+                    }
+                  }
                   // Leave the AV channel (mobile only)
                   if (!kIsWeb) {
                     try { await _engine.leaveChannel(); } catch (_) {}
                   }
-                  if (mounted) navigator.pop();
+                  if (mounted) {
+                    debugPrint('[LiveStream] Manual leave - popping to station list');
+                    navigator.popUntil((route) => route.isFirst);
+                  }
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

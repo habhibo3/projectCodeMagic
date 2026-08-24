@@ -96,6 +96,9 @@ class CoHostInviteBanner extends StatelessWidget {
               if (!context.mounted) return;
               Navigator.of(context).pop();
               if (ok) {
+                Navigator.of(context).popUntil((r) => r.isFirst);
+                await Future.delayed(const Duration(milliseconds: 250));
+                if (!context.mounted) return;
                 Navigator.push(
                   context,
                   MaterialPageRoute(

@@ -689,6 +689,9 @@ class _GlobalInviteOverlayState extends State<_GlobalInviteOverlay> {
                   }
                   final navContext = MlivecastApp.navigatorKey.currentContext;
                   if (navContext != null && station != null) {
+                    Navigator.of(navContext).popUntil((r) => r.isFirst);
+                    await Future.delayed(const Duration(milliseconds: 250));
+                    if (!navContext.mounted) return;
                     Navigator.push(
                       navContext,
                       MaterialPageRoute(
@@ -757,6 +760,9 @@ class _GlobalInviteOverlayState extends State<_GlobalInviteOverlay> {
               if (ok) {
                 final navContext = MlivecastApp.navigatorKey.currentContext;
                 if (navContext != null) {
+                  Navigator.of(navContext).popUntil((r) => r.isFirst);
+                  await Future.delayed(const Duration(milliseconds: 250));
+                  if (!navContext.mounted) return;
                   Navigator.push(
                     navContext,
                     MaterialPageRoute(
