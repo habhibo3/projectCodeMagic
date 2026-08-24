@@ -29,7 +29,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:livekit_client/livekit_client.dart' hide ConnectionState;
 import 'package:flutter_background/flutter_background.dart';
 import '../services/station_upload_progress_service.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart' show Helper;
+import 'package:flutter_webrtc/flutter_webrtc.dart' show Helper, RTCVideoViewObjectFit;
 import '../services/livekit_token_service.dart';
 import '../services/agora_web_service.dart';
 import '../widgets/agora_web_video_player.dart';
@@ -2804,7 +2804,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     if (_liveKitInitialized) {
       final track = _liveKitCameraTrack(isHost: isHost);
       if (track != null) {
-        return VideoTrackRenderer(track);
+        return VideoTrackRenderer(
+          track,
+          fit: VideoViewFit.cover,
+        );
       }
       if (!isHost && !_isCoHostConnected) {
         return _buildNoCoHostFallback(waiting: _coHostEntry != null);
@@ -2893,7 +2896,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       );
     }
 
-    // Mobile video player
+    // 3. Mobile Agora Fallback
     if (!_engineInitialized) {
       return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
     }

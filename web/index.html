@@ -47,6 +47,12 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #E0B847;
     }
+    /* Force all live stream video elements to stretch and fill their containers in portrait */
+    video {
+      object-fit: cover !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
   </style>
   <script src="agora_web.js"></script>
 </head>
