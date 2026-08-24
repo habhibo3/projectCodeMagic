@@ -20,15 +20,13 @@ workflows:
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme Runner
-      - name: Upload to TestFlight
-        script: |
-          app-store-connect publish \
-            --apple-id 6772730781 \
-            --path build/ios/ipa/*.ipa
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
     publishing:
+      app_store_connect:
+        apple_id: "6772730781"
+        submit_to_testflight: true
       email:
         recipients:
           - ihebmechergui333@gmail.com
