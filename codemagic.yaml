@@ -34,3 +34,24 @@ workflows:
         notify:
           success: true
           failure: true
+
+  android-build:
+    name: Android Release Build (.aab)
+    max_build_duration: 60
+    environment:
+      flutter: 3.32.4
+    scripts:
+      - name: Get Flutter dependencies
+        script: flutter pub get
+      - name: Build Android App Bundle (.aab)
+        script: flutter build appbundle --release
+    artifacts:
+      - build/app/outputs/bundle/release/*.aab
+      - build/app/outputs/apk/release/*.apk
+    publishing:
+      email:
+        recipients:
+          - ihebmechergui333@gmail.com
+        notify:
+          success: true
+          failure: true
