@@ -39,6 +39,15 @@
 	<string>Mlivecast needs camera access for live contest streams.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Mlivecast needs microphone access for live contest streams.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Mlivecast needs access to your photo library to save recorded live streams.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Mlivecast needs permission to save recorded live streams to your photos.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
