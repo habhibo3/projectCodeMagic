@@ -609,9 +609,7 @@ class FirebaseService {
       return downloadUrl;
     } catch (e) {
       debugPrint('Failed to upload station recording to Firebase Storage: $e');
-      // Return local path as fallback for testing
-      debugPrint('Using local path as fallback: ${file.path}');
-      return file.path;
+      throw Exception('Failed to upload station recording to Firebase Storage: $e');
     }
   }
 

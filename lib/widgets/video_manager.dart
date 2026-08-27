@@ -201,8 +201,16 @@ class VideoManager {
       return controller;
     }
 
-    if (isLocal) {
-      final playableFile = await _getPlayableFile(File(videoUrl));
+    final isNetworkUrl = videoUrl.startsWith('http://') || videoUrl.startsWith('https://');
+    final actualIsLocal = isLocal && !isNetworkUrl;
+
+    if (actualIsLocal) {
+      final file = File(videoUrl);
+      if (!file.existsSync()) {
+        debugPrint('VideoManager: Local file path does not exist on this device: $videoUrl');
+        throw Exception('Local file does not exist: $videoUrl');
+      }
+      final playableFile = await _getPlayableFile(file);
       controller = VideoPlayerController.file(playableFile);
     } else {
       // Check memory cache of resolved cached paths synchronously
