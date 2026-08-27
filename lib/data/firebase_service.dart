@@ -590,7 +590,8 @@ class FirebaseService {
         final mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
         uploadTask = ref.putData(bytes, firebase_storage.SettableMetadata(contentType: mimeType));
       } else {
-        uploadTask = ref.putFile(file);
+        final mimeType = isVideo ? 'video/mp4' : 'image/jpeg';
+        uploadTask = ref.putFile(file, firebase_storage.SettableMetadata(contentType: mimeType));
       }
       
       if (onProgress != null) {

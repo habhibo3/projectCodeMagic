@@ -357,17 +357,15 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
                       alignment: Alignment.center,
                       children: [
                         Positioned.fill(
-                          child: FittedBox(
-                            fit: widget.fit,
-                            clipBehavior: Clip.hardEdge,
-                            child: SizedBox(
-                              width: _controller!.value.size.width > 0
-                                  ? _controller!.value.size.width
-                                  : 16,
-                              height: _controller!.value.size.height > 0
-                                  ? _controller!.value.size.height
-                                  : 9,
-                              child: VideoPlayer(_controller!),
+                          child: Container(
+                            color: Colors.black,
+                            child: Center(
+                              child: AspectRatio(
+                                aspectRatio: _controller!.value.isInitialized && _controller!.value.aspectRatio > 0
+                                    ? _controller!.value.aspectRatio
+                                    : 16 / 9,
+                                child: VideoPlayer(_controller!),
+                              ),
                             ),
                           ),
                         ),

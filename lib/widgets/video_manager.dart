@@ -160,7 +160,9 @@ class VideoManager {
   }
 
   Future<File> _getPlayableFile(File cachedFile) async {
-    if (cachedFile.path.endsWith('.mp4') || cachedFile.path.endsWith('.mkv')) {
+    if (cachedFile.path.toLowerCase().endsWith('.mp4') ||
+        cachedFile.path.toLowerCase().endsWith('.mov') ||
+        cachedFile.path.toLowerCase().endsWith('.mkv')) {
       return cachedFile;
     }
 
@@ -170,23 +172,17 @@ class VideoManager {
       cacheDir.createSync(recursive: true);
     }
 
-    final symlinkName = '${cachedFile.path.hashCode}.mp4';
-    final symlinkPath = '${cacheDir.path}/$symlinkName';
+    final fileHash = cachedFile.path.hashCode.abs();
+    final symlinkPath = '${cacheDir.path}/video_$fileHash.mp4';
     final symlinkFile = File(symlinkPath);
 
-    if (!symlinkFile.existsSync()) {
+    if (!symlinkFile.existsSync() || symlinkFile.lengthSync() == 0) {
       try {
-        final link = Link(symlinkPath);
-        await link.create(cachedFile.path);
-        debugPrint('VideoManager: Created symlink for video: $symlinkPath -> ${cachedFile.path}');
-      } catch (e) {
-        debugPrint('VideoManager: Symlink creation failed, copying instead: $e');
-        try {
-          await cachedFile.copy(symlinkPath);
-        } catch (copyErr) {
-          debugPrint('VideoManager: Copy failed, returning original: $copyErr');
-          return cachedFile;
-        }
+        await cachedFile.copy(symlinkPath);
+        debugPrint('VideoManager: Copied cached video with .mp4 extension: $symlinkPath');
+      } catch (copyErr) {
+        debugPrint('VideoManager: Copy failed, returning original: $copyErr');
+        return cachedFile;
       }
     }
 
