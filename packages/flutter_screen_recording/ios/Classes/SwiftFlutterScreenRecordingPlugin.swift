@@ -35,11 +35,12 @@ let screenSize = UIScreen.main.bounds
 
     }else if(call.method == "stopRecordScreen"){
         if(videoWriter != nil){
-            stopRecording()
-            let documentsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0] as NSString
-            result(String(documentsPath.appendingPathComponent(nameVideo)))
+            stopRecording { (filePath) in
+                result(filePath)
+            }
+        } else {
+            result("")
         }
-         result("")
     }
   }
 
@@ -158,7 +159,7 @@ let screenSize = UIScreen.main.bounds
         }
     }
 
-    @objc func stopRecording() {
+    @objc func stopRecording(completion: @escaping (String) -> Void) {
         //Stop Recording the screen
         if #available(iOS 11.0, *) {
             RPScreenRecorder.shared().stopCapture( handler: { (error) in
@@ -173,6 +174,8 @@ let screenSize = UIScreen.main.bounds
         
         self.videoWriter?.finishWriting {
             print("finished writing video");
+            let documentsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0] as NSString
+            let filePath = String(documentsPath.appendingPathComponent(self.nameVideo))
 
             //Now save the video
             PHPhotoLibrary.shared().performChanges({
@@ -188,9 +191,11 @@ let screenSize = UIScreen.main.bounds
                     print("Video did not save for some reason", error.debugDescription);
                     debugPrint(error?.localizedDescription ?? "error is nil");
                 }
+                DispatchQueue.main.async {
+                    completion(filePath)
+                }
             }
         }
-    
-}
+    }
     
 }
