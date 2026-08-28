@@ -68,20 +68,19 @@ let screenSize = UIScreen.main.bounds
         //Create the video settings
         if #available(iOS 11.0, *) {
             
-            var codec = AVVideoCodecJPEG;
+            var codec = AVVideoCodecH264
             
-            if(recordAudio){
-                codec = AVVideoCodecH264;
-            }
+            let nativeBounds = UIScreen.main.nativeBounds
+            let width = nativeBounds.width
+            let height = nativeBounds.height
             
             let videoSettings: [String : Any] = [
                 AVVideoCodecKey  : codec,
-                AVVideoWidthKey  : screenSize.width,
-                AVVideoHeightKey : screenSize.height
+                AVVideoWidthKey  : width,
+                AVVideoHeightKey : height
             ]
                         
             if(recordAudio){
-                
                 let audioOutputSettings: [String : Any] = [
                     AVNumberOfChannelsKey : 2,
                     AVFormatIDKey : kAudioFormatMPEG4AAC,
@@ -89,71 +88,58 @@ let screenSize = UIScreen.main.bounds
                 ]
                 
                 audioInput = AVAssetWriterInput(mediaType: AVMediaType.audio, outputSettings: audioOutputSettings)
+                audioInput.expectsMediaDataInRealTime = true
                 videoWriter?.add(audioInput)
-            
             }
 
-
-        //Create the asset writer input object whihc is actually used to write out the video
-         videoWriterInput = AVAssetWriterInput(mediaType: AVMediaType.video, outputSettings: videoSettings);
-         videoWriter?.add(videoWriterInput!);
-            
+            //Create the asset writer input object which is actually used to write out the video
+            videoWriterInput = AVAssetWriterInput(mediaType: AVMediaType.video, outputSettings: videoSettings)
+            videoWriterInput?.expectsMediaDataInRealTime = true
+            videoWriter?.add(videoWriterInput!)
         }
 
         //Tell the screen recorder to start capturing and to call the handler
         if #available(iOS 11.0, *) {
-            
             if(recordAudio){
-                RPScreenRecorder.shared().isMicrophoneEnabled=true;
+                RPScreenRecorder.shared().isMicrophoneEnabled=true
             }else{
-                RPScreenRecorder.shared().isMicrophoneEnabled=false;
-
+                RPScreenRecorder.shared().isMicrophoneEnabled=false
             }
             
             RPScreenRecorder.shared().startCapture(
             handler: { (cmSampleBuffer, rpSampleType, error) in
                 guard error == nil else {
-                    //Handle error
-                    print("Error starting capture");
-                    self.myResult!(false)
-                    return;
+                    print("Error starting capture", error?.localizedDescription ?? "")
+                    return
                 }
 
-                switch rpSampleType {
-                case RPSampleBufferType.video:
-                    print("writing sample....");
+                if CMSampleBufferDataIsReady(cmSampleBuffer) {
                     if self.videoWriter?.status == AVAssetWriter.Status.unknown {
-
-                        if (( self.videoWriter?.startWriting ) != nil) {
-                            print("Starting writing");
-                            self.myResult!(true)
-                            self.videoWriter?.startWriting()
-                            self.videoWriter?.startSession(atSourceTime:  CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer))
-                        }
+                        self.videoWriter?.startWriting()
+                        self.videoWriter?.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer))
                     }
 
                     if self.videoWriter?.status == AVAssetWriter.Status.writing {
-                        if (self.videoWriterInput?.isReadyForMoreMediaData == true) {
-                            print("Writting a sample");
-                            if  self.videoWriterInput?.append(cmSampleBuffer) == false {
-                                print(" we have a problem writing video")
-                                self.myResult!(false)
+                        switch rpSampleType {
+                        case .video:
+                            if self.videoWriterInput?.isReadyForMoreMediaData == true {
+                                self.videoWriterInput?.append(cmSampleBuffer)
                             }
+                        case .audioApp, .audioMic:
+                            if self.recordAudio && self.audioInput?.isReadyForMoreMediaData == true {
+                                self.audioInput?.append(cmSampleBuffer)
+                            }
+                        @unknown default:
+                            break
                         }
                     }
-
-
-                default:
-                   print("not a video sample, so ignore");
                 }
             } ){(error) in
-                        guard error == nil else {
-                           //Handle error
-                           print("Screen record not allowed");
-                           self.myResult!(false)
-                           return;
-                       }
-                   }
+                guard error == nil else {
+                    print("Screen record not allowed", error?.localizedDescription ?? "")
+                    return
+                }
+            }
         } else {
             //Fallback on earlier versions
         }
