@@ -1816,6 +1816,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             final fileSizeMB = (fileSize / (1024 * 1024)).toStringAsFixed(2);
             debugPrint('[LiveStream] Recording file verified: $savedPath, size: $fileSizeMB MB ($fileSize bytes)');
 
+            Map<String, dynamic> diagnostics = {};
+            final diagFile = File('$savedPath.diag.json');
+            if (await diagFile.exists()) {
+              try {
+                diagnostics = jsonDecode(await diagFile.readAsString());
+                debugPrint('[LiveStream] Native Recording Diagnostics: $diagnostics');
+              } catch (diagErr) {
+                debugPrint('[LiveStream] Error reading diag file: $diagErr');
+              }
+            }
+
             if (fileSize > 1000) {
               StationUploadProgressService.instance.startUpload();
               videoUrl = await firebaseService.uploadStationRecording(
@@ -1825,6 +1836,22 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                 onProgress: (p) => StationUploadProgressService.instance.updateProgress(p),
               );
               debugPrint('[LiveStream] Recording uploaded successfully: $videoUrl');
+
+              // Log complete recording telemetry to Firestore
+              try {
+                await FirebaseFirestore.instance.collection('recording_debug_logs').add({
+                  'stationId': stationId,
+                  'userId': _currentUserId,
+                  'timestamp': FieldValue.serverTimestamp(),
+                  'videoUrl': videoUrl,
+                  'fileSizeBytes': fileSize,
+                  'fileSizeMB': fileSizeMB,
+                  'platform': Platform.operatingSystem,
+                  'diagnostics': diagnostics,
+                });
+              } catch (logErr) {
+                debugPrint('[LiveStream] Failed to write telemetry to Firestore: $logErr');
+              }
             } else {
               debugPrint('[LiveStream] Recording file too small ($fileSize bytes), aborting upload.');
             }
