@@ -17,6 +17,7 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
     var recordAudio: Bool = false
     var isSessionStarted: Bool = false
     var lastVideoTimestamp: CMTime = .zero
+    var activeAudioType: RPSampleBufferType? = nil
     var videoFramesCount: Int = 0
     var audioSamplesCount: Int = 0
     var myResult: FlutterResult?
@@ -36,6 +37,7 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
             self.nameVideo = ((args?["name"] as? String) ?? "recording") + ".mp4"
             self.isSessionStarted = false
             self.lastVideoTimestamp = .zero
+            self.activeAudioType = nil
             self.videoFramesCount = 0
             self.audioSamplesCount = 0
             startRecording()
@@ -101,11 +103,16 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
         }
         
         if self.recordAudio {
+            var channelLayout = AudioChannelLayout()
+            memset(&channelLayout, 0, MemoryLayout<AudioChannelLayout>.size)
+            channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+            
             let audioOutputSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVNumberOfChannelsKey: 1,
+                AVNumberOfChannelsKey: 2,
                 AVSampleRateKey: 44100.0,
-                AVEncoderBitRateKey: 64000
+                AVEncoderBitRateKey: 128000,
+                AVChannelLayoutKey: NSData(bytes: &channelLayout, length: MemoryLayout<AudioChannelLayout>.size)
             ]
             
             let audioIn = AVAssetWriterInput(mediaType: .audio, outputSettings: audioOutputSettings)
@@ -153,25 +160,20 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
                         }
                     }
                     
-                case .audioMic:
-                    // Only process mic audio when microphone is enabled to avoid mixing conflicting audio streams
-                    if self.recordAudio && self.isSessionStarted && self.videoWriter?.status == .writing {
-                        let audioTimestamp = CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer)
-                        // Never let audio timestamp outrun video timestamp by more than 0.1s
-                        if audioTimestamp <= self.lastVideoTimestamp + CMTime(seconds: 0.1, preferredTimescale: 600) {
-                            if let aInput = self.audioInput, aInput.isReadyForMoreMediaData {
-                                if aInput.append(cmSampleBuffer) {
-                                    self.audioSamplesCount += 1
-                                }
-                            }
-                        }
+                case .audioApp, .audioMic:
+                    guard self.recordAudio, self.isSessionStarted, self.videoWriter?.status == .writing else { break }
+                    
+                    // Lock onto whichever audio stream arrives first (.audioApp or .audioMic)
+                    // so buffers from different sources with different formats are never mixed together
+                    if self.activeAudioType == nil {
+                        self.activeAudioType = rpSampleType
+                        print("[ScreenRecord] Locked active audio stream to: \(rpSampleType == .audioApp ? "audioApp" : "audioMic")")
                     }
                     
-                case .audioApp:
-                    // If mic is not requested, write app audio only
-                    if !self.recordAudio && self.isSessionStarted && self.videoWriter?.status == .writing {
+                    if self.activeAudioType == rpSampleType {
                         let audioTimestamp = CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer)
-                        if audioTimestamp <= self.lastVideoTimestamp + CMTime(seconds: 0.1, preferredTimescale: 600) {
+                        // Never let audio timestamp outrun video timestamp
+                        if audioTimestamp <= self.lastVideoTimestamp + CMTime(seconds: 0.15, preferredTimescale: 600) {
                             if let aInput = self.audioInput, aInput.isReadyForMoreMediaData {
                                 if aInput.append(cmSampleBuffer) {
                                     self.audioSamplesCount += 1

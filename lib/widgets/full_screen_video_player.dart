@@ -100,7 +100,8 @@ class _FullScreenVideoPlayerState extends State<FullScreenVideoPlayer> {
       };
       _controller!.addListener(_controllerListener!);
 
-      // Auto-play when initialized
+      // Auto-play and set volume to 1.0 when initialized
+      _controller!.setVolume(1.0);
       _controller!.play();
       VideoManager().pauseAllExcept(widget.videoUrl);
     } catch (e) {
