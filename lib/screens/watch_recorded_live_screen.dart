@@ -69,25 +69,28 @@ class _WatchRecordedLiveScreenState extends State<WatchRecordedLiveScreen> {
                 // Video Player Container
                 ConstrainedBox(
                   constraints: BoxConstraints(
-                    maxHeight: kIsWeb ? MediaQuery.of(context).size.height * 0.55 : double.infinity,
+                    maxHeight: kIsWeb
+                        ? MediaQuery.of(context).size.height * 0.55
+                        : MediaQuery.of(context).size.height * 0.45,
+                    minHeight: 200,
                   ),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Container(
-                      color: Colors.black,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          MediaContentPreview(
-                            type: inferMediaTypeFromUrl(recorded.videoUrl),
-                            contentUrl: recorded.videoUrl.isNotEmpty
-                                ? recorded.videoUrl
-                                : recorded.thumbnailUrl.isNotEmpty
-                                    ? recorded.thumbnailUrl
-                                    : widget.station.image,
-                            height: double.infinity,
-                            autoPlayVideo: false,
-                            videoThumbnailMode: true,
+                  child: Container(
+                    width: double.infinity,
+                    color: Colors.black,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MediaContentPreview(
+                          type: inferMediaTypeFromUrl(recorded.videoUrl),
+                          contentUrl: recorded.videoUrl.isNotEmpty
+                              ? recorded.videoUrl
+                              : recorded.thumbnailUrl.isNotEmpty
+                                  ? recorded.thumbnailUrl
+                                  : widget.station.image,
+                          height: double.infinity,
+                          fit: BoxFit.contain,
+                          autoPlayVideo: false,
+                          videoThumbnailMode: true,
                             onVideoTap: () {
                               Navigator.push(
                                 context,

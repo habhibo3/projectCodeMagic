@@ -1810,13 +1810,27 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         debugPrint('[LiveStream] station recording saved to: $savedPath');
 
         if (savedPath.isNotEmpty && _currentUserId != null) {
-          StationUploadProgressService.instance.startUpload();
-          videoUrl = await firebaseService.uploadStationRecording(
-            stationId,
-            _currentUserId!,
-            File(savedPath),
-            onProgress: (p) => StationUploadProgressService.instance.updateProgress(p),
-          );
+          final file = File(savedPath);
+          if (await file.exists()) {
+            final fileSize = await file.length();
+            final fileSizeMB = (fileSize / (1024 * 1024)).toStringAsFixed(2);
+            debugPrint('[LiveStream] Recording file verified: $savedPath, size: $fileSizeMB MB ($fileSize bytes)');
+
+            if (fileSize > 1000) {
+              StationUploadProgressService.instance.startUpload();
+              videoUrl = await firebaseService.uploadStationRecording(
+                stationId,
+                _currentUserId!,
+                file,
+                onProgress: (p) => StationUploadProgressService.instance.updateProgress(p),
+              );
+              debugPrint('[LiveStream] Recording uploaded successfully: $videoUrl');
+            } else {
+              debugPrint('[LiveStream] Recording file too small ($fileSize bytes), aborting upload.');
+            }
+          } else {
+            debugPrint('[LiveStream] Recording file does not exist at path: $savedPath');
+          }
         }
       } catch (e) {
         debugPrint('[LiveStream] Failed to finalize station recording: $e');
