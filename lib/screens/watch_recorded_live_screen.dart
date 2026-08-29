@@ -88,7 +88,7 @@ class _WatchRecordedLiveScreenState extends State<WatchRecordedLiveScreen> {
                                   ? recorded.thumbnailUrl
                                   : widget.station.image,
                           height: double.infinity,
-                          fit: BoxFit.contain,
+                          fit: BoxFit.cover,
                           autoPlayVideo: false,
                           videoThumbnailMode: true,
                           onVideoTap: () {

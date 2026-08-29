@@ -16,6 +16,7 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
     var nameVideo: String = ""
     var recordAudio: Bool = false
     var isSessionStarted: Bool = false
+    var lastVideoTimestamp: CMTime = .zero
     var videoFramesCount: Int = 0
     var audioSamplesCount: Int = 0
     var myResult: FlutterResult?
@@ -34,6 +35,7 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
             self.recordAudio = (args?["audio"] as? Bool) ?? false
             self.nameVideo = ((args?["name"] as? String) ?? "recording") + ".mp4"
             self.isSessionStarted = false
+            self.lastVideoTimestamp = .zero
             self.videoFramesCount = 0
             self.audioSamplesCount = 0
             startRecording()
@@ -99,16 +101,11 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
         }
         
         if self.recordAudio {
-            var channelLayout = AudioChannelLayout()
-            memset(&channelLayout, 0, MemoryLayout<AudioChannelLayout>.size)
-            channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
-            
             let audioOutputSettings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVNumberOfChannelsKey: 2,
+                AVNumberOfChannelsKey: 1,
                 AVSampleRateKey: 44100.0,
-                AVEncoderBitRateKey: 128000,
-                AVChannelLayoutKey: NSData(bytes: &channelLayout, length: MemoryLayout<AudioChannelLayout>.size)
+                AVEncoderBitRateKey: 64000
             ]
             
             let audioIn = AVAssetWriterInput(mediaType: .audio, outputSettings: audioOutputSettings)
@@ -140,6 +137,7 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
                             self.videoWriter?.startWriting()
                             self.videoWriter?.startSession(atSourceTime: timestamp)
                             self.isSessionStarted = true
+                            self.lastVideoTimestamp = timestamp
                             print("[ScreenRecord] Started session at timestamp: \(timestamp.seconds)")
                             self.myResult?(true)
                             self.myResult = nil
@@ -150,15 +148,34 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
                         if let vInput = self.videoWriterInput, vInput.isReadyForMoreMediaData {
                             if vInput.append(cmSampleBuffer) {
                                 self.videoFramesCount += 1
+                                self.lastVideoTimestamp = timestamp
                             }
                         }
                     }
                     
-                case .audioApp, .audioMic:
+                case .audioMic:
+                    // Only process mic audio when microphone is enabled to avoid mixing conflicting audio streams
                     if self.recordAudio && self.isSessionStarted && self.videoWriter?.status == .writing {
-                        if let aInput = self.audioInput, aInput.isReadyForMoreMediaData {
-                            if aInput.append(cmSampleBuffer) {
-                                self.audioSamplesCount += 1
+                        let audioTimestamp = CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer)
+                        // Never let audio timestamp outrun video timestamp by more than 0.1s
+                        if audioTimestamp <= self.lastVideoTimestamp + CMTime(seconds: 0.1, preferredTimescale: 600) {
+                            if let aInput = self.audioInput, aInput.isReadyForMoreMediaData {
+                                if aInput.append(cmSampleBuffer) {
+                                    self.audioSamplesCount += 1
+                                }
+                            }
+                        }
+                    }
+                    
+                case .audioApp:
+                    // If mic is not requested, write app audio only
+                    if !self.recordAudio && self.isSessionStarted && self.videoWriter?.status == .writing {
+                        let audioTimestamp = CMSampleBufferGetPresentationTimeStamp(cmSampleBuffer)
+                        if audioTimestamp <= self.lastVideoTimestamp + CMTime(seconds: 0.1, preferredTimescale: 600) {
+                            if let aInput = self.audioInput, aInput.isReadyForMoreMediaData {
+                                if aInput.append(cmSampleBuffer) {
+                                    self.audioSamplesCount += 1
+                                }
                             }
                         }
                     }
@@ -180,6 +197,8 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
     }
     
     @objc func stopRecording(completion: @escaping (String) -> Void) {
+        self.isSessionStarted = false
+        
         if #available(iOS 11.0, *) {
             self.recorder.stopCapture { error in
                 if let error = error {
