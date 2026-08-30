@@ -32,6 +32,7 @@ class _FullScreenVideoPlayerState extends State<FullScreenVideoPlayer> {
   bool _showControls = true;
   bool _isMuted = false;
   bool _isLandscapeLocked = false;
+  bool _isZoomFilled = false;
   VoidCallback? _controllerListener;
   int _sessionCounter = 0;
 
@@ -229,54 +230,87 @@ class _FullScreenVideoPlayerState extends State<FullScreenVideoPlayer> {
   }
 
   Widget _buildVideoPlayer() {
-    return GestureDetector(
-      onTap: _toggleControls,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Video
-          Center(
-            child: _controller!.value.isInitialized
-                ? SizedBox.expand(
-                    child: FittedBox(
-                      fit: BoxFit.contain,
-                      child: SizedBox(
-                        width: _controller!.value.size.width,
-                        height: _controller!.value.size.height,
-                        child: VideoPlayer(_controller!),
-                      ),
-                    ),
-                  )
-                : const CircularProgressIndicator(color: AppTheme.primary),
-          ),
+    return OrientationBuilder(
+      builder: (context, orientation) {
+        final isLandscape = orientation == Orientation.landscape;
+        final videoRatio = _controller!.value.aspectRatio;
+        final isPortraitVideo = videoRatio < 1.0;
 
-          // Controls overlay
-          if (_isInitialized && _controller != null)
-            AnimatedOpacity(
-              opacity: _showControls ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 250),
-              child: IgnorePointer(
-                ignoring: !_showControls,
-                child: Container(
-                  color: Colors.black.withOpacity(0.35),
-                  child: Column(
-                    children: [
-                      // Top bar — close button
-                      SafeArea(
-                        bottom: false,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(LucideIcons.chevronDown, color: Colors.white, size: 28),
-                                onPressed: _closePlayer,
-                              ),
-                              const Spacer(),
-                            ],
+        BoxFit effectiveFit;
+        if (_isZoomFilled) {
+          effectiveFit = BoxFit.cover;
+        } else if (!isLandscape) {
+          effectiveFit = isPortraitVideo ? BoxFit.fitWidth : BoxFit.contain;
+        } else {
+          effectiveFit = BoxFit.contain;
+        }
+
+        return GestureDetector(
+          onTap: _toggleControls,
+          onDoubleTap: () {
+            setState(() {
+              _isZoomFilled = !_isZoomFilled;
+            });
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // Video
+              Center(
+                child: _controller!.value.isInitialized
+                    ? SizedBox.expand(
+                        child: FittedBox(
+                          fit: effectiveFit,
+                          child: SizedBox(
+                            width: _controller!.value.size.width,
+                            height: _controller!.value.size.height,
+                            child: VideoPlayer(_controller!),
                           ),
                         ),
-                      ),
+                      )
+                    : const CircularProgressIndicator(color: AppTheme.primary),
+              ),
+
+              // Controls overlay
+              if (_isInitialized && _controller != null)
+                AnimatedOpacity(
+                  opacity: _showControls ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 250),
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: Container(
+                      color: Colors.black.withOpacity(0.35),
+                      child: Column(
+                        children: [
+                          // Top bar — close button & zoom toggle
+                          SafeArea(
+                            bottom: false,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              child: Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(LucideIcons.chevronDown, color: Colors.white, size: 28),
+                                    onPressed: _closePlayer,
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: Icon(
+                                      _isZoomFilled ? LucideIcons.minimize2 : LucideIcons.maximize2,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isZoomFilled = !_isZoomFilled;
+                                      });
+                                    },
+                                    tooltip: _isZoomFilled ? 'Fit to screen' : 'Fill screen',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
 
                       // Center play/pause big button
                       const Spacer(),
@@ -418,8 +452,10 @@ class _FullScreenVideoPlayerState extends State<FullScreenVideoPlayer> {
                 ),
               ),
             ),
-        ],
-      ),
+          ],
+          ),
+        );
+      },
     );
   }
 

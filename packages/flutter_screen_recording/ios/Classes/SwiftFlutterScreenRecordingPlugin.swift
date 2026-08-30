@@ -236,12 +236,6 @@ public class SwiftFlutterScreenRecordingPlugin: NSObject, FlutterPlugin {
                         } catch {
                             print("[ScreenRecord] Could not read file size: \(error)")
                         }
-                        
-                        PHPhotoLibrary.shared().performChanges({
-                            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-                        }) { _, _ in
-                            // Saved to photo library
-                        }
                     }
                     
                     // Write diagnostic sidecar JSON file
