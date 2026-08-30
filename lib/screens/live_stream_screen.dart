@@ -1809,6 +1809,31 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         final savedPath = await FlutterScreenRecording.stopRecordScreen;
         debugPrint('[LiveStream] station recording saved to: $savedPath');
 
+        // IMMEDIATELY teardown LiveKit room & release camera/mic/GPU before starting upload
+        final liveKitRoom = _liveKitRoom;
+        if (liveKitRoom != null) {
+          try {
+            liveKitRoom.removeListener(_onLiveKitRoomChanged);
+            final localParticipant = liveKitRoom.localParticipant;
+            if (localParticipant != null) {
+              unawaited(localParticipant.setCameraEnabled(false));
+              unawaited(localParticipant.setMicrophoneEnabled(false));
+              unawaited(localParticipant.unpublishAllTracks());
+            }
+            unawaited(liveKitRoom.disconnect());
+            unawaited(liveKitRoom.dispose());
+            _liveKitRoom = null;
+          } catch (e) {
+            debugPrint('[LiveStream] Error cleaning up LiveKit room in _saveStationRecording: $e');
+          }
+        }
+
+        try {
+          await firebaseService.setStationLiveStatus(stationId, false);
+        } catch (e) {
+          debugPrint('[LiveStream] Failed to reset station live status: $e');
+        }
+
         if (savedPath.isNotEmpty && _currentUserId != null) {
           final file = File(savedPath);
           if (await file.exists()) {
@@ -1862,30 +1887,6 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       } catch (e) {
         debugPrint('[LiveStream] Failed to finalize station recording: $e');
       }
-    }
-
-    // Teardown LiveKit room connection
-    final liveKitRoom = _liveKitRoom;
-    if (liveKitRoom != null) {
-      try {
-        liveKitRoom.removeListener(_onLiveKitRoomChanged);
-        final localParticipant = liveKitRoom.localParticipant;
-        if (localParticipant != null) {
-          unawaited(localParticipant.setCameraEnabled(false));
-          unawaited(localParticipant.setMicrophoneEnabled(false));
-          unawaited(localParticipant.unpublishAllTracks());
-        }
-        unawaited(liveKitRoom.disconnect());
-        unawaited(liveKitRoom.dispose());
-      } catch (e) {
-        debugPrint('[LiveStream] Error cleaning up LiveKit room in _saveStationRecording: $e');
-      }
-    }
-
-    try {
-      await firebaseService.setStationLiveStatus(stationId, false);
-    } catch (e) {
-      debugPrint('[LiveStream] Failed to reset station live status: $e');
     }
 
     final validVideoUrl = (videoUrl != null && videoUrl.trim().isNotEmpty) ? videoUrl.trim() : null;

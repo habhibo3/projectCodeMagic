@@ -67,13 +67,8 @@ class _WatchRecordedLiveScreenState extends State<WatchRecordedLiveScreen> {
             child: Column(
               children: [
                 // Video Player Container
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: kIsWeb
-                        ? MediaQuery.of(context).size.height * 0.55
-                        : MediaQuery.of(context).size.height * 0.45,
-                    minHeight: 200,
-                  ),
+                AspectRatio(
+                  aspectRatio: 16 / 9,
                   child: Container(
                     width: double.infinity,
                     color: Colors.black,
