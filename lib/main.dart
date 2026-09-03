@@ -46,9 +46,11 @@ void main() async {
         firebaseOptions = prod.DefaultFirebaseOptions.currentPlatform;
         break;
     }
-    await Firebase.initializeApp(
-      options: firebaseOptions,
-    );
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: firebaseOptions,
+      );
+    }
 
     // Auto-seed initial mock data on staging if database is empty
     if (currentEnv == Env.staging) {
