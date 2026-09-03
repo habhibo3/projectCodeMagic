@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'firebase_options.dart';
+import 'env.dart';
+import 'firebase_options_staging.dart' as staging;
+import 'firebase_options_prod.dart' as prod;
 import 'data/firebase_seeder.dart';
 import 'data/firebase_service.dart';
 import 'data/live_session_service.dart';
@@ -35,10 +37,18 @@ void main() async {
 
 
 
-  // Initialize Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+    FirebaseOptions firebaseOptions;
+    switch (currentEnv) {
+      case Env.staging:
+        firebaseOptions = staging.DefaultFirebaseOptions.currentPlatform;
+        break;
+      case Env.prod:
+        firebaseOptions = prod.DefaultFirebaseOptions.currentPlatform;
+        break;
+    }
+    await Firebase.initializeApp(
+      options: firebaseOptions,
+    );
 
   runApp(const MlivecastApp());
 }
