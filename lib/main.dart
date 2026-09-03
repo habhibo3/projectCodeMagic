@@ -52,16 +52,14 @@ void main() async {
       );
     }
 
-    // Auto-seed initial mock data on staging if database is empty
-    if (currentEnv == Env.staging) {
-      try {
-        await FirebaseSeeder.seedIfEmpty();
-      } catch (e) {
-        debugPrint('[Staging Seeder] $e');
-      }
-    }
-
   runApp(const MlivecastApp());
+
+  // Auto-seed initial mock data on staging in the background without blocking UI startup
+  if (currentEnv == Env.staging) {
+    FirebaseSeeder.seedIfEmpty().catchError((e) {
+      debugPrint('[Staging Seeder] $e');
+    });
+  }
 }
 
 class MlivecastApp extends StatelessWidget {
