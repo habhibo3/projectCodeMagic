@@ -50,6 +50,15 @@ void main() async {
       options: firebaseOptions,
     );
 
+    // Auto-seed initial mock data on staging if database is empty
+    if (currentEnv == Env.staging) {
+      try {
+        await FirebaseSeeder.seedIfEmpty();
+      } catch (e) {
+        debugPrint('[Staging Seeder] $e');
+      }
+    }
+
   runApp(const MlivecastApp());
 }
 
