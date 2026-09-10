@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "contest-app-94050"
+    "default": "contest-app-94050",
+    "production": "contest-app-94050",
+    "staging": "mlivecast-staging"
   }
 }

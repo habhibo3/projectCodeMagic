@@ -35,7 +35,7 @@ android {
     defaultConfig {
         applicationId = "com.contestlive.contest_live"
         minSdk = 23
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
