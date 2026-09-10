@@ -19,6 +19,7 @@ import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
 import '../widgets/video_player_widget.dart';
 import '../widgets/media_content_preview.dart';
+import '../widgets/delete_account_dialog.dart';
 import 'contest_detail_screen.dart';
 import 'create_post_screen.dart';
 import 'create_contest_screen.dart';
@@ -111,7 +112,10 @@ class _ContestListScreenState extends State<ContestListScreen> {
             Navigator(
               key: _navKeys[0],
               onGenerateRoute: (_) => MaterialPageRoute(
-                builder: (_) => const StationListScreen(),
+                builder: (_) => StationListScreen(
+                  webCategoryNotifier: widget.webCategoryNotifier,
+                  webSearchNotifier: widget.webSearchNotifier,
+                ),
               ),
             ),
             Navigator(
@@ -2617,6 +2621,33 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                     onPressed: () async {
                       await AuthService.instance.signOut();
                     },
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 8. DELETE ACCOUNT BUTTON
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red.shade400.withOpacity(0.8),
+                      side: BorderSide(color: Colors.redAccent.withOpacity(0.25), width: 1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: Icon(LucideIcons.trash2, size: 15, color: Colors.red.shade400.withOpacity(0.8)),
+                    label: Text(
+                      'DELETE ACCOUNT',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                        color: Colors.red.shade400.withOpacity(0.8),
+                      ),
+                    ),
+                    onPressed: () => DeleteAccountDialog.show(context),
                   ),
                 ),
                 const SizedBox(height: 24),

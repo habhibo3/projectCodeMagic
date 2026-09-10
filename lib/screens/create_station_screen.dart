@@ -97,16 +97,42 @@ class _CreateStationScreenState extends State<CreateStationScreen> {
     setState(() => _isCreating = true);
 
     try {
-      // Check if user already has a station and delete it
+      // Check if user already has an active station
       final existingStations = await _firebaseService.getStations().first;
       final userStation = existingStations.where((s) => s.creatorId == profile.uid).toList();
       
       if (userStation.isNotEmpty) {
-        // Delete existing station
-        for (var oldStation in userStation) {
-          await _firebaseService.deleteStation(oldStation.id);
-          debugPrint('Deleted existing station: ${oldStation.id}');
+        setState(() => _isCreating = false);
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E22),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(LucideIcons.alertCircle, color: Colors.amber, size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'Station Limit Reached',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ],
+              ),
+              content: const Text(
+                'You can only have one station at a time. If you want to create a new station, please delete your existing station manually first.',
+                style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
         }
+        return;
       }
 
       String imageUrl = 'https://via.placeholder.com/400x200/1E1E1E/FFFFFF?text=Station';

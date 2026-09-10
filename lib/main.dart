@@ -26,6 +26,7 @@ import 'models/cohost_invite.dart';
 import 'models/entry.dart';
 import 'data/admin_service.dart';
 import 'widgets/avatar_helper.dart';
+import 'widgets/delete_account_dialog.dart';
 
 
 void main() async {
@@ -505,6 +506,27 @@ class _WebLayoutWrapperState extends State<_WebLayoutWrapper> {
                                 Text(
                                   'Logout',
                                   style: TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                        child: InkWell(
+                          onTap: () => DeleteAccountDialog.show(context),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(LucideIcons.trash2, color: Colors.white38, size: 14),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Delete Account',
+                                  style: TextStyle(color: Colors.white38, fontSize: 12),
                                 ),
                               ],
                             ),

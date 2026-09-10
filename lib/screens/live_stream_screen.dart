@@ -13,6 +13,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screen_recording/flutter_screen_recording.dart';
+import 'package:gal/gal.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -1084,6 +1085,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       if (_isBroadcaster && credentials.canPublish && localParticipant != null) {
         await localParticipant.setCameraEnabled(true);
         await localParticipant.setMicrophoneEnabled(true);
+      } else if (localParticipant != null) {
+        // Viewers: explicitly disable mic to prevent echo
+        await localParticipant.setMicrophoneEnabled(false);
+        _isMicOn = false;
+        debugPrint('[LiveKit] Viewer mic disabled on join');
       }
 
       if (!mounted) {
@@ -1131,7 +1137,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   Future<void> initAgora() async {
     debugPrint('[LiveStream] initAgora START — role=${widget.isHost ? "HOST" : widget.isCoHost ? "COHOST" : "VIEWER"}, channel=$_channelId');
-    await [Permission.microphone, Permission.camera].request();
+    if (_isBroadcaster) {
+      await [Permission.microphone, Permission.camera].request();
+    }
 
     // ── STEP 1: Clean up any previous Agora singleton state ──
     // The Agora engine is a SINGLETON. If a previous LiveStreamScreen
@@ -1216,6 +1224,13 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       if (result['success'] == true) {
         debugPrint('[LiveStream] initAgora — web channel joined successfully (uid=${result['uid']})');
         setState(() => _webAgoraInitialized = true);
+
+        // Viewers: mute their mic on web to prevent echo
+        if (!_isBroadcaster) {
+          AgoraWebService.toggleMuteAudio(true);
+          _isMicOn = false;
+          debugPrint('[LiveStream] initAgora — web viewer mic muted');
+        }
       } else {
         debugPrint('[LiveStream] initAgora — web channel join failed: ${result['error']}');
         if (mounted) {
@@ -1327,6 +1342,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           : ClientRoleType.clientRoleAudience,
     );
 
+    await _engine.enableAudio();
+    await _engine.setAudioScenario(AudioScenarioType.audioScenarioChatroom);
     await _engine.enableVideo();
     if (_isBroadcaster) {
       await _engine.startPreview();
@@ -1361,6 +1378,13 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         );
         joined = true;
         debugPrint('[LiveStream] initAgora — joinChannel call succeeded');
+
+        // Viewers: explicitly mute their local mic to prevent echo
+        if (!_isBroadcaster) {
+          await _engine.muteLocalAudioStream(true);
+          _isMicOn = false;
+          debugPrint('[LiveStream] initAgora — viewer mic muted');
+        }
       } catch (e) {
         joinAttempts++;
         debugPrint('[LiveStream] initAgora — joinChannel attempt $joinAttempts FAILED: $e');
@@ -1655,11 +1679,17 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         useBrowserCapture: true, // Manual contest recording
       );
     } else {
-      success = await LiveKitTokenService().startContestLiveRecording(
-        contestId: widget.contest.id,
-        entryId: widget.entryId ?? 'organizer',
-        thumbnailUrl: widget.contest.image,
-      );
+      try {
+        final title = _buildRecordingFilename();
+        success = await FlutterScreenRecording.startRecordScreenAndAudio(
+          title,
+          titleNotification: "Contest Recording",
+          messageNotification: "Recording contest live stream...",
+        );
+      } catch (e) {
+        debugPrint('[LiveStream] Mobile contest screen recording error: $e');
+        success = false;
+      }
     }
 
     if (success) {
@@ -1702,20 +1732,99 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           _checkAndDownloadContestRecording();
         });
       }
+      if (!isAutoSave && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Recording finished! Download starting...'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    } else {
+      // Mobile: stop screen recording, save to gallery, tell the user
+      if (!isAutoSave && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Recording finished! Saving to your gallery...'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      _saveContestRecordingToGallery(isAutoSave: isAutoSave);
     }
 
     if (widget.entryId != null) {
       unawaited(LiveKitTokenService().stopContestLiveRecording(widget.contest.id, widget.entryId!));
     }
+  }
 
-    if (!isAutoSave && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Recording finished! Download starting...'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 4),
-        ),
-      );
+  Future<void> _saveContestRecordingToGallery({bool isAutoSave = false}) async {
+    try {
+      final savedPath = await FlutterScreenRecording.stopRecordScreen;
+      debugPrint('[LiveStream] Contest recording saved to: $savedPath');
+
+      if (savedPath.isEmpty) {
+        debugPrint('[LiveStream] Contest recording path is empty.');
+        if (!isAutoSave && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recording could not be saved. Please try again.'),
+              backgroundColor: Colors.redAccent,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
+      final file = File(savedPath);
+      if (!await file.exists()) {
+        debugPrint('[LiveStream] Contest recording file not found at: $savedPath');
+        if (!isAutoSave && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Recording file not found. Please try again.'),
+              backgroundColor: Colors.redAccent,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
+      // Request gallery access if needed
+      final hasAccess = await Gal.hasAccess();
+      if (!hasAccess) {
+        await Gal.requestAccess();
+      }
+
+      // Save video to gallery (Photos on iOS, Gallery on Android)
+      await Gal.putVideo(savedPath);
+      debugPrint('[LiveStream] Contest recording saved to gallery successfully.');
+
+      final destination = Platform.isIOS ? 'Photos app' : 'Gallery';
+      if (!isAutoSave && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Recording saved to your $destination! ✓'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[LiveStream] Failed to save contest recording to gallery: $e');
+      if (!isAutoSave && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not save recording to gallery: $e'),
+            backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
@@ -3865,6 +3974,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             type: _selectedEntry!.type,
             contentUrl: _selectedEntry!.contentUrl,
             height: double.infinity,
+            fit: BoxFit.contain,
             videoThumbnailMode: _selectedEntry!.type == 'video',
           ),
           Container(
