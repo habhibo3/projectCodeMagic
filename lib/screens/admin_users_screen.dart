@@ -591,33 +591,41 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Are you sure you want to delete ${user.displayName}?',
-              style: const TextStyle(color: Colors.white70),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red.withOpacity(0.3)),
-              ),
-              child: const Text(
-                '⚠️ This action cannot be undone. All user data including posts, entries, and votes will be permanently deleted.',
-                style: TextStyle(color: Colors.redAccent, fontSize: 12),
-              ),
-            ),
-          ],
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Are you sure you want to delete ${user.displayName}?',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                  ),
+                  child: const Text(
+                    '⚠️ This action cannot be undone. All user data including auth account, posts, stations, entries, and votes will be permanently deleted.',
+                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          StatefulBuilder(
+            builder: (dialogContext, setDialogState) {
+              return TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+              );
+            },
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -625,16 +633,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               foregroundColor: Colors.white,
             ),
             onPressed: () async {
+              final rootNavigator = Navigator.of(context);
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
+              rootNavigator.pop();
               await _adminService.deleteUser(user.uid);
-              if (mounted) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${user.displayName} has been deleted'),
-                    backgroundColor: Colors.redAccent,
-                  ),
-                );
-              }
+              scaffoldMessenger.showSnackBar(
+                SnackBar(
+                  content: Text('${user.displayName} has been completely deleted'),
+                  backgroundColor: Colors.redAccent,
+                ),
+              );
             },
             child: const Text('Delete Permanently'),
           ),

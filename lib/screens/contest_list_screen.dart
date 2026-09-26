@@ -16,10 +16,13 @@ import '../models/post.dart';
 import '../models/user.dart';
 import '../models/notification.dart';
 import '../theme/app_theme.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../widgets/avatar_helper.dart';
 import '../widgets/video_player_widget.dart';
 import '../widgets/media_content_preview.dart';
 import '../widgets/delete_account_dialog.dart';
+import '../widgets/community_safety_dialog.dart';
+import 'auth_screen.dart';
 import 'contest_detail_screen.dart';
 import 'create_post_screen.dart';
 import 'create_contest_screen.dart';
@@ -1903,12 +1906,63 @@ class _UserProfileTabState extends State<_UserProfileTab> {
       ),
       body: Consumer<RankingEngine>(
         builder: (context, engine, child) {
-          final user = engine.currentUserProfile;
-          if (user == null) {
-            return const Center(
-              child: CircularProgressIndicator(color: AppTheme.primary),
+          final authUser = FirebaseAuth.instance.currentUser;
+          UserModel? tempUser = engine.currentUserProfile;
+
+          // If Firestore stream hasn't arrived yet but user is authenticated, construct fallback profile
+          if (tempUser == null && authUser != null) {
+            final fallbackName = authUser.displayName?.isNotEmpty == true
+                ? authUser.displayName!
+                : (authUser.email?.split('@').first ?? 'My Account');
+            tempUser = UserModel(
+              uid: authUser.uid,
+              displayName: fallbackName,
+              username: fallbackName.toLowerCase().replaceAll(RegExp(r'\s+'), ''),
+              email: authUser.email ?? '',
+              photoURL: authUser.photoURL ?? '',
+              role: 'contestant',
+              country: 'Global',
+              countryFlag: '🌍',
+              bio: 'Performer account.',
+              createdAt: DateTime.now(),
+              totalVotesCast: 0,
+              subscriptionLevel: 'free',
+              zip: '',
+              city: '',
+              state: '',
+              location: 'Global',
             );
           }
+
+          if (tempUser == null) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(LucideIcons.user, size: 54, color: Colors.white24),
+                  const SizedBox(height: 16),
+                  const Text('No user profile found', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text('Please sign in to access and manage your profile.', style: TextStyle(color: Colors.white38, fontSize: 13)),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen()));
+                    },
+                    child: const Text('Log In / Sign Up', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          final user = tempUser;
 
           if (_loadedForUid != user.uid) {
             _loadedForUid = user.uid;

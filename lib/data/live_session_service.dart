@@ -468,6 +468,51 @@ class LiveSessionService {
     }, SetOptions(merge: true));
   }
 
+  /// Transfers host authority to a co-host for continuous multi-host broadcasting.
+  Future<bool> transferHostAuthority({
+    required bool isStation,
+    required String targetId,
+    String? entryId,
+    required String newHostUserId,
+    required String newHostName,
+    required String newHostAvatar,
+    required String oldHostUserId,
+    required String oldHostName,
+    required String oldHostAvatar,
+    String? inviteId,
+  }) async {
+    if (!_isInitialized || _db == null) return false;
+    try {
+      if (inviteId != null) {
+        try {
+          await _invites.doc(inviteId).update({'status': 'completed'});
+        } catch (_) {}
+      }
+
+      final docRef = isStation
+          ? _stationSessionRef(targetId)
+          : _resolvedSessionRef(targetId, entryId);
+
+      await docRef.set({
+        'hostUserId': newHostUserId,
+        'hostName': newHostName,
+        'hostAvatar': newHostAvatar,
+        'coHostUserId': oldHostUserId,
+        'coHostName': oldHostName,
+        'coHostAvatar': oldHostAvatar,
+        'cameraView': 'splitBoth',
+        'isSplitScreen': true,
+        'status': 'live',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      return true;
+    } catch (e) {
+      debugPrint('transferHostAuthority failed: $e');
+      return false;
+    }
+  }
+
   Future<void> startHostSession({
     required String contestId,
     required String entryId,

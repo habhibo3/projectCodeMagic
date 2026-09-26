@@ -89,7 +89,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   int _viewerCount = 0;
 
   // Media controls (local states for Host)
-  bool _isMicOn = true;
+  bool _isMicOn = false;
   bool _isCameraOn = true;
   bool _isFrontCamera = true;
   bool _isScreenSharing = false;
@@ -98,6 +98,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   CameraView _cameraView = CameraView.hostOnly;
   bool _isSplitScreen = true; // false = Fullscreen camera feed on screen
   bool _isCoHostConnected = false;
+  bool _hasTransferredHostAuthority = false;
+  bool _isTransferringHost = false;
   bool _showChatInRightPanel = true;
   bool _isScreenShareFullScreen = false;
 
@@ -115,13 +117,80 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   String get _channelId => widget.entryId ?? (_isStationLive ? _stationId : widget.contest.id);
   String? get _entryId => widget.entryId;
-  bool get _isBroadcaster => widget.isHost || widget.isCoHost;
+  bool get _isBroadcaster => widget.isHost || widget.isCoHost || _amIActuallyHost || _amIActuallyCoHost;
   bool get _isStationLive => widget.contest.type == 'Station';
   String get _stationId => StationModel.normalizeId(widget.contest.id);
 
+  String? _currentHostName;
+  String? _currentHostAvatar;
+  String? _currentCoHostName;
+  String? _currentCoHostAvatar;
+
   // Dynamic role check based on session state (not static widget parameters)
-  bool get _amIActuallyCoHost => _isSessionCoHost || widget.isCoHost;
-  bool get _amIActuallyHost => _isSessionHost || widget.isHost;
+  bool get _amIActuallyCoHost {
+    if (_hostUserId != null && _hostUserId == _currentUserId) return false;
+    if (_coHostEntry?.userId != null && _coHostEntry!.userId == _currentUserId) return true;
+    if (_isSessionCoHost) return true;
+    if (_isSessionHost) return false;
+    return widget.isCoHost;
+  }
+  bool get _amIActuallyHost {
+    if (_hostUserId != null && _hostUserId!.isNotEmpty) {
+      return _hostUserId == _currentUserId;
+    }
+    if (_isSessionHost) return true;
+    if (_isSessionCoHost) return false;
+    return widget.isHost;
+  }
+
+  String get _displayHostName {
+    if (_amIActuallyHost) {
+      final myProfile = Provider.of<RankingEngine>(context, listen: false).currentUserProfile;
+      if (myProfile != null && myProfile.displayName.isNotEmpty) {
+        return myProfile.displayName;
+      }
+    }
+    if (_currentHostName != null && _currentHostName!.isNotEmpty) {
+      return _currentHostName!;
+    }
+    return _organizerName;
+  }
+
+  String? get _displayHostAvatar {
+    if (_amIActuallyHost) {
+      final myProfile = Provider.of<RankingEngine>(context, listen: false).currentUserProfile;
+      if (myProfile != null && myProfile.photoURL.isNotEmpty) {
+        return myProfile.photoURL;
+      }
+    }
+    return _currentHostAvatar ?? _organizerAvatar;
+  }
+
+  String get _displayCoHostName {
+    if (_amIActuallyCoHost) {
+      final myProfile = Provider.of<RankingEngine>(context, listen: false).currentUserProfile;
+      if (myProfile != null && myProfile.displayName.isNotEmpty) {
+        return myProfile.displayName;
+      }
+    }
+    if (_coHostEntry != null && _coHostEntry!.userName.isNotEmpty && _coHostEntry!.userName != 'Co-Host') {
+      return _coHostEntry!.userName;
+    }
+    if (_currentCoHostName != null && _currentCoHostName!.isNotEmpty) {
+      return _currentCoHostName!;
+    }
+    return 'Co-Host';
+  }
+
+  String? get _displayCoHostAvatar {
+    if (_amIActuallyCoHost) {
+      final myProfile = Provider.of<RankingEngine>(context, listen: false).currentUserProfile;
+      if (myProfile != null && myProfile.photoURL.isNotEmpty) {
+        return myProfile.photoURL;
+      }
+    }
+    return _coHostEntry?.userAvatar ?? _currentCoHostAvatar;
+  }
 
   StreamSubscription? _sessionSub;
   StreamSubscription? _organizerProfileSub;
@@ -170,7 +239,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
     if (widget.isCoHost) {
       _cameraView = CameraView.splitBoth;
-      _isCoHostConnected = true;
+      _isCoHostConnected = false;
+      _coHostSessionConfirmed = false;
     }
 
     // Force Landscape Orientation (only on mobile)
@@ -384,9 +454,18 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
       final status = session['status'] as String?;
       final hostUserId = session['hostUserId'] as String?;
+      final hostName = session['hostName'] as String?;
+      final hostAvatar = session['hostAvatar'] as String?;
       final coHostUserId = session['coHostUserId'] as String?;
       final coHostName = session['coHostName'] as String?;
       final coHostAvatar = session['coHostAvatar'] as String?;
+      if (hostUserId != null) _hostUserId = hostUserId;
+      setState(() {
+        if (hostName != null && hostName.isNotEmpty) _currentHostName = hostName;
+        if (hostAvatar != null && hostAvatar.isNotEmpty) _currentHostAvatar = hostAvatar;
+        if (coHostName != null && coHostName.isNotEmpty) _currentCoHostName = coHostName;
+        if (coHostAvatar != null && coHostAvatar.isNotEmpty) _currentCoHostAvatar = coHostAvatar;
+      });
       debugPrint('[LiveStream] _listenOrganizerLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost, _currentUserId=$_currentUserId');
 
       if (hostUserId != null) _hostUserId = hostUserId;
@@ -429,7 +508,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             _cameraView = CameraView.splitBoth;
           }
         });
-      } else if (status == 'live' && coHostUserId == null && _isCoHostConnected) {
+      } else if (status == 'live' && coHostUserId == null && _isCoHostConnected && _coHostSessionConfirmed) {
         // Co-host left — revert to single host view for everyone
         debugPrint('[LiveStream] Organizer: cohost left, forcing host-only view for ALL users');
         setState(() {
@@ -439,10 +518,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           _cameraView = CameraView.hostOnly;
           _coHostSessionConfirmed = false;
         });
-        if (widget.isHost) {
+        if (_amIActuallyHost) {
           _updateSessionLayout();
         }
-        if (_amIActuallyCoHost && !_isLeaving) {
+        if (_amIActuallyCoHost && !_amIActuallyHost && !_isSessionHost && !_isLeaving) {
           _isLeaving = true;
           debugPrint('[LiveStream] Organizer: cohost leaving - navigating home');
           Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
@@ -565,10 +644,18 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
       final status = session['status'] as String?;
       final hostUserId = session['hostUserId'] as String?;
+      final hostName = session['hostName'] as String?;
+      final hostAvatar = session['hostAvatar'] as String?;
       final coHostName = session['coHostName'] as String?;
       final coHostAvatar = session['coHostAvatar'] as String?;
       final coHostUserId = session['coHostUserId'] as String?;
       if (hostUserId != null) _hostUserId = hostUserId;
+      setState(() {
+        if (hostName != null && hostName.isNotEmpty) _currentHostName = hostName;
+        if (hostAvatar != null && hostAvatar.isNotEmpty) _currentHostAvatar = hostAvatar;
+        if (coHostName != null && coHostName.isNotEmpty) _currentCoHostName = coHostName;
+        if (coHostAvatar != null && coHostAvatar.isNotEmpty) _currentCoHostAvatar = coHostAvatar;
+      });
       debugPrint('[LiveStream] _listenLiveSession — status=$status, coHostUserId=$coHostUserId, isHost=${widget.isHost}, isCoHost=${widget.isCoHost}, _amIActuallyCoHost=$_amIActuallyCoHost, _currentUserId=$_currentUserId');
 
       if (status == 'live' && !_hasEverBeenLive) {
@@ -691,7 +778,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             _cameraView = CameraView.splitBoth;
           }
         });
-      } else if (status == 'live' && coHostUserId == null && _isCoHostConnected) {
+      } else if (status == 'live' && coHostUserId == null && _isCoHostConnected && _coHostSessionConfirmed) {
         // Co-host left — force host-only view immediately for ALL users
         debugPrint('[LiveStream] Contestant: cohost left (coHostUserId is null), forcing host-only view for ALL users');
         setState(() {
@@ -702,11 +789,11 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           _coHostSessionConfirmed = false; // Reset confirmation state
         });
         // Force session layout update to sync to all viewers
-        if (widget.isHost) {
+        if (_amIActuallyHost) {
           _updateSessionLayout();
         }
         // Co-host navigation: navigate to home immediately
-        if (_amIActuallyCoHost && !_isLeaving) {
+        if (_amIActuallyCoHost && !_amIActuallyHost && !_isSessionHost && !_isLeaving) {
           _isLeaving = true;
           debugPrint('[LiveStream] Contestant: cohost leaving - navigating to home (amIActuallyCoHost=$_amIActuallyCoHost)');
           Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
@@ -982,7 +1069,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                 _isLeaving = true;
                 await room.disconnect();
                 Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-              } else if (signal['reason'] == 'dropped_by_host' && _amIActuallyCoHost && !_isLeaving) {
+              } else if (signal['reason'] == 'dropped_by_host' && _amIActuallyCoHost && !_amIActuallyHost && !_isSessionHost && !_isLeaving) {
                 debugPrint('[LiveKit] Cohost dropped by host, disconnecting immediately');
                 _isLeaving = true;
                 await room.disconnect();
@@ -1015,8 +1102,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             // Also update Firestore to remove cohost
             _disconnectCoHost();
           }
-          // If cohost and host disconnects, navigate away
-          if (_amIActuallyCoHost && isHostDisconnect) {
+          // If cohost and host disconnects, navigate away (only if not the new host!)
+          if (_amIActuallyCoHost && !_amIActuallyHost && !_isSessionHost && isHostDisconnect) {
             debugPrint('[LiveKit] Cohost detected host disconnect, navigating away');
             if (!_isLeaving) {
               _isLeaving = true;
@@ -1084,7 +1171,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final localParticipant = room.localParticipant;
       if (_isBroadcaster && credentials.canPublish && localParticipant != null) {
         await localParticipant.setCameraEnabled(true);
-        await localParticipant.setMicrophoneEnabled(true);
+        await localParticipant.setMicrophoneEnabled(false);
+        _isMicOn = false;
+        debugPrint('[LiveKit] Broadcaster camera enabled, mic initially off');
       } else if (localParticipant != null) {
         // Viewers: explicitly disable mic to prevent echo
         await localParticipant.setMicrophoneEnabled(false);
@@ -1225,12 +1314,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         debugPrint('[LiveStream] initAgora — web channel joined successfully (uid=${result['uid']})');
         setState(() => _webAgoraInitialized = true);
 
-        // Viewers: mute their mic on web to prevent echo
-        if (!_isBroadcaster) {
-          AgoraWebService.toggleMuteAudio(true);
-          _isMicOn = false;
-          debugPrint('[LiveStream] initAgora — web viewer mic muted');
-        }
+        // Mute mic initially on web join (broadcasters can toggle ON via bottom bar)
+        AgoraWebService.toggleMuteAudio(true);
+        _isMicOn = false;
+        debugPrint('[LiveStream] initAgora — web mic initially muted on join');
       } else {
         debugPrint('[LiveStream] initAgora — web channel join failed: ${result['error']}');
         if (mounted) {
@@ -1379,12 +1466,10 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
         joined = true;
         debugPrint('[LiveStream] initAgora — joinChannel call succeeded');
 
-        // Viewers: explicitly mute their local mic to prevent echo
-        if (!_isBroadcaster) {
-          await _engine.muteLocalAudioStream(true);
-          _isMicOn = false;
-          debugPrint('[LiveStream] initAgora — viewer mic muted');
-        }
+        // Mute local mic initially on join (broadcasters can toggle ON via bottom bar)
+        await _engine.muteLocalAudioStream(true);
+        _isMicOn = false;
+        debugPrint('[LiveStream] initAgora — local mic initially muted on join');
       } catch (e) {
         joinAttempts++;
         debugPrint('[LiveStream] initAgora — joinChannel attempt $joinAttempts FAILED: $e');
@@ -1423,7 +1508,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
     // 1. For station live hosts, send force disconnect signal to all users immediately
     // This ensures users are kicked immediately regardless of recording upload
-    if (_amIActuallyHost && _isStationLive && _liveKitRoom != null) {
+    if (!_hasTransferredHostAuthority && _amIActuallyHost && _isStationLive && _liveKitRoom != null) {
       debugPrint('[LiveStream] dispose — Station live host sending force disconnect signal to all users');
       try {
         final signal = jsonEncode({
@@ -1463,7 +1548,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     }
 
     // 3. Finalize active station recording if host (this happens AFTER users are kicked)
-    final isSavingStationRecording = _isStationLive && widget.isHost;
+    final isSavingStationRecording = !_hasTransferredHostAuthority && _isStationLive && _amIActuallyHost;
     if (isSavingStationRecording) {
       debugPrint('[LiveStream] dispose — saving Station Live recording after users kicked');
       _saveStationRecording(widget.contest.id);
@@ -1504,7 +1589,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     }
 
     // 3. Reset Firestore session state
-    if (_amIActuallyHost && (_isStationLive || _liveKitInitialized || _hasEverBeenLive)) {
+    if (!_hasTransferredHostAuthority && _amIActuallyHost && (_isStationLive || _liveKitInitialized || _hasEverBeenLive)) {
       debugPrint('[LiveStream] dispose — HOST cleaning up Firestore session for contest=${widget.contest.id}, entryId=$_entryId, amIActuallyHost=$_amIActuallyHost');
       try {
         final liveService = LiveSessionService();
@@ -1911,6 +1996,25 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
       // Now release media stream tracks after recorded bytes are safely extracted
       AgoraWebService.releaseMediaDevices();
+
+      // Teardown LiveKit room & release tracks on web after recording is finished
+      final liveKitRoom = _liveKitRoom;
+      if (liveKitRoom != null) {
+        try {
+          liveKitRoom.removeListener(_onLiveKitRoomChanged);
+          final localParticipant = liveKitRoom.localParticipant;
+          if (localParticipant != null) {
+            unawaited(localParticipant.setCameraEnabled(false));
+            unawaited(localParticipant.setMicrophoneEnabled(false));
+            unawaited(localParticipant.unpublishAllTracks());
+          }
+          unawaited(liveKitRoom.disconnect());
+          unawaited(liveKitRoom.dispose());
+          _liveKitRoom = null;
+        } catch (e) {
+          debugPrint('[LiveStream] Error cleaning up LiveKit room in _saveStationRecording on web: $e');
+        }
+      }
     } else {
       try {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -2026,6 +2130,194 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     } else {
       StationUploadProgressService.instance.failUpload('Upload completed without video file');
       debugPrint('[LiveStream] WARNING: Station recording videoUrl was empty or upload failed. Skipped creating recorded live.');
+    }
+  }
+
+  Future<void> _transferHostAuthorityToCoHost() async {
+    final coHost = _coHostEntry;
+    if (coHost == null || coHost.userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No active co-host connected to transfer authority to.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    if (_isTransferringHost) return;
+    setState(() => _isTransferringHost = true);
+
+    try {
+      // 1. Verify that the Co-Host is a Premium User
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(coHost.userId)
+          .get();
+
+      final subscriptionLevel = userDoc.data()?['subscriptionLevel'] as String?;
+      final isPremium = subscriptionLevel == 'premium';
+
+      if (!isPremium) {
+        if (mounted) {
+          setState(() => _isTransferringHost = false);
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Colors.white24),
+              ),
+              title: const Row(
+                children: [
+                  Icon(LucideIcons.crown, color: Colors.amber, size: 24),
+                  SizedBox(width: 8),
+                  Text(
+                    'Premium Required',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              content: Text(
+                '${coHost.userName} is not a Premium subscriber.\n\nHost authority can only be transferred to Premium members 👑.',
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK', style: TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+
+      // 2. Show confirmation dialog
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF1E1E1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Colors.amber, width: 1.5),
+          ),
+          title: const Row(
+            children: [
+              Icon(LucideIcons.crown, color: Colors.amber, size: 24),
+              SizedBox(width: 8),
+              Text(
+                'Transfer Host Authority',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Text(
+            'Are you sure you want to transfer host authority to ${coHost.userName}?\n\nThey will become the primary host with full broadcast & co-host invitation privileges, and you can leave without stopping the live stream.',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber.shade700,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(LucideIcons.arrowRightLeft, size: 16),
+              label: const Text('Transfer Now', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true || !mounted) {
+        setState(() => _isTransferringHost = false);
+        return;
+      }
+
+      final myProfile = Provider.of<RankingEngine>(context, listen: false).currentUserProfile;
+      final currentHostDisplayName = myProfile?.displayName.isNotEmpty == true
+          ? myProfile!.displayName
+          : (_currentHostName ?? _organizerName);
+      final currentHostAvatarUrl = myProfile?.photoURL.isNotEmpty == true
+          ? myProfile!.photoURL
+          : (_currentHostAvatar ?? _organizerAvatar ?? '');
+
+      // 3. Perform the atomic transfer in Firestore
+      final success = await _liveSessionService.transferHostAuthority(
+        isStation: _isStationLive,
+        targetId: _isStationLive ? _stationId : widget.contest.id,
+        entryId: _entryId,
+        newHostUserId: coHost.userId,
+        newHostName: coHost.userName,
+        newHostAvatar: coHost.userAvatar,
+        oldHostUserId: _currentUserId ?? '',
+        oldHostName: currentHostDisplayName,
+        oldHostAvatar: currentHostAvatarUrl,
+        inviteId: _activeInviteId,
+      );
+
+      if (success && mounted) {
+        setState(() {
+          _hasTransferredHostAuthority = true;
+          _isSessionHost = false;
+          _isSessionCoHost = true;
+          final oldHostId = _currentUserId ?? '';
+          _hostUserId = coHost.userId;
+          _currentHostName = coHost.userName;
+          _currentHostAvatar = coHost.userAvatar;
+          _currentCoHostName = currentHostDisplayName;
+          _currentCoHostAvatar = currentHostAvatarUrl;
+          _coHostEntry = ContestEntry(
+            id: 'cohost_$oldHostId',
+            userId: oldHostId,
+            userName: currentHostDisplayName,
+            userAvatar: currentHostAvatarUrl.isNotEmpty
+                ? currentHostAvatarUrl
+                : 'https://i.pravatar.cc/150?u=cohost',
+            contentUrl: '',
+            type: 'video',
+            caption: '',
+          );
+          _isCoHostConnected = true;
+          _cameraView = CameraView.splitBoth;
+          _isTransferringHost = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Host authority successfully transferred to ${coHost.userName}!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else if (mounted) {
+        setState(() => _isTransferringHost = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to transfer host authority. Please try again.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isTransferringHost = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error transferring host: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
   }
 
@@ -2217,8 +2509,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   String _nameForEntry(ContestEntry? entry, RankingEngine engine) {
     if (entry == null) {
-      // Organizer mode - get organizer's name (loaded from creator profile stream)
-      return _organizerName;
+      // Organizer mode - get organizer's name or current host name
+      return _currentHostName ?? _organizerName;
     }
     if (entry.userId == engine.currentUserId) {
       return engine.currentUserProfile?.displayName ?? entry.userName;
@@ -2783,7 +3075,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
   Widget _buildHostVideoPanel(
       ContestEntry? hostEntry, ContestEntry? coHostEntry, RankingEngine engine) {
-    final hostName = _nameForEntry(hostEntry, engine);
+    final hostName = _displayHostName;
 
     return Stack(
       fit: StackFit.expand,
@@ -2877,6 +3169,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Widget _buildCoHostVideoPanel(ContestEntry? coHostEntry) {
+    final coHostName = _displayCoHostName;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -2914,7 +3207,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
           right: 8,
           bottom: 8,
           child: BroadcastNameplate(
-            name: coHostEntry?.userName ?? 'Co-Host',
+            name: coHostName,
             role: _isCoHostConnected ? 'Co-Host' : 'Awaiting join…',
             compact: true,
           ),
@@ -2948,9 +3241,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Widget _buildCameraFeed({required bool isHost, ContestEntry? entry}) {
-    final name = entry?.userName ?? (isHost ? _organizerName : 'Co-Host');
-    final subtitle = isHost ? 'Organizer' : 'Guest';
-    final avatar = entry?.userAvatar ?? (isHost ? _organizerAvatar : null);
+    final name = isHost ? _displayHostName : _displayCoHostName;
+    final subtitle = isHost ? 'Host' : 'Guest';
+    final avatar = isHost ? _displayHostAvatar : _displayCoHostAvatar;
 
     if (_liveKitInitialized) {
       final track = _liveKitCameraTrack(isHost: isHost);
@@ -2963,7 +3256,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       if (!isHost && !_isCoHostConnected) {
         return _buildNoCoHostFallback(waiting: _coHostEntry != null);
       }
-      if ((widget.isHost && isHost) || (widget.isCoHost && !isHost)) {
+      if ((_amIActuallyHost && isHost) || (_amIActuallyCoHost && !isHost)) {
         if (!_isCameraOn) {
           return _buildCameraOffFallback(name: name, subtitle: subtitle, avatar: avatar);
         }
@@ -2974,7 +3267,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     // Web-specific video player
     if (kIsWeb) {
       // Co-host device: local feed on co-host slot, remote host on host slot
-      if (widget.isCoHost) {
+      if (_amIActuallyCoHost) {
         if (isHost) {
           // Co-host sees the host's remote feed in the host panel
           if (!_webAgoraInitialized) {
@@ -3000,7 +3293,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       }
 
       // Host device
-      if (widget.isHost) {
+      if (_amIActuallyHost) {
         if (isHost) {
           if (!_isCameraOn) {
             return _buildCameraOffFallback(name: name, subtitle: subtitle, avatar: avatar);
@@ -3053,7 +3346,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     }
 
     // Co-host device: local feed on co-host slot, remote host on host slot
-    if (widget.isCoHost) {
+    if (_amIActuallyCoHost) {
       if (isHost) {
         // Co-host sees the host's remote feed in the host panel
         return AgoraVideoView(
@@ -3082,7 +3375,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     }
 
     // Host device
-    if (widget.isHost) {
+    if (_amIActuallyHost) {
       if (isHost) {
         if (!_isCameraOn) {
           return _buildCameraOffFallback(name: name, subtitle: subtitle, avatar: avatar);
@@ -3140,7 +3433,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
     final room = _liveKitRoom;
     if (room == null) return null;
 
-    final isLocal = (widget.isHost && isHost) || (widget.isCoHost && !isHost);
+    final isLocal = (isHost && _amIActuallyHost) || (!isHost && _amIActuallyCoHost);
     final Participant? participant = isLocal
         ? room.localParticipant
         : _findLiveKitParticipant(isHost: isHost, room: room);
@@ -3154,30 +3447,51 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
   }
 
   Participant? _findLiveKitParticipant({required bool isHost, required Room room}) {
-    final hostId = _hostUserId ?? widget.contest.creatorId;
-    final coHostId = _coHostEntry?.userId;
+    final currentHostId = _hostUserId ?? widget.contest.creatorId;
+    final currentCoHostId = _coHostEntry?.userId;
 
     if (isHost) {
-      // Look for participant with host_ prefix or hostId
-      for (final participant in room.remoteParticipants.values) {
-        if (participant.identity.startsWith('host_') ||
-            (hostId.isNotEmpty && participant.identity.contains(hostId))) {
-          return participant;
+      // 1. Match remote participant by currentHostId
+      if (currentHostId.isNotEmpty) {
+        for (final participant in room.remoteParticipants.values) {
+          if (participant.identity.contains(currentHostId)) {
+            return participant;
+          }
         }
       }
-      // Fallback: return participant that is not cohost or viewer
+      // 2. Fallback: match by 'host_' prefix as long as it's not the current co-host
+      for (final participant in room.remoteParticipants.values) {
+        if (participant.identity.startsWith('host_')) {
+          if (currentCoHostId == null || !participant.identity.contains(currentCoHostId)) {
+            return participant;
+          }
+        }
+      }
+      // 3. Fallback: remote participant that isn't cohost or viewer
       for (final participant in room.remoteParticipants.values) {
         if (!participant.identity.startsWith('cohost_') && !participant.identity.startsWith('viewer_')) {
-          return participant;
+          if (currentCoHostId == null || !participant.identity.contains(currentCoHostId)) {
+            return participant;
+          }
         }
       }
       return null;
     } else {
-      // Look for participant with cohost_ prefix or coHostId — NEVER return the Host!
+      // Co-Host track lookup:
+      // 1. Match remote participant by currentCoHostId
+      if (currentCoHostId != null && currentCoHostId.isNotEmpty) {
+        for (final participant in room.remoteParticipants.values) {
+          if (participant.identity.contains(currentCoHostId)) {
+            return participant;
+          }
+        }
+      }
+      // 2. Fallback: match by 'cohost_' prefix as long as it's not the current host
       for (final participant in room.remoteParticipants.values) {
-        if (participant.identity.startsWith('cohost_') ||
-            (coHostId != null && coHostId.isNotEmpty && participant.identity.contains(coHostId))) {
-          return participant;
+        if (participant.identity.startsWith('cohost_')) {
+          if (currentHostId.isEmpty || !participant.identity.contains(currentHostId)) {
+            return participant;
+          }
         }
       }
       return null;
@@ -3421,7 +3735,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                     icon: LucideIcons.refreshCw,
                     isActive: true,
                     onPressed: _switchCamera),
-                if (kIsWeb && widget.isHost) ...[
+                if (kIsWeb && _amIActuallyHost) ...[
                   const SizedBox(width: 6),
                   _buildRoundBtn(
                       icon: _isScreenSharing ? LucideIcons.monitor : LucideIcons.monitor,
@@ -3435,7 +3749,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             const SizedBox(width: 8),
             _buildRecordingButton(),
 
-            if (widget.isHost) ...[
+            if (_amIActuallyHost) ...[
               const SizedBox(width: 24),
               // Layout Selectors (visible only for Host)
               _buildViewBtn(
@@ -3537,7 +3851,7 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
             const SizedBox(width: 12),
 
             // Live Show Controls (Countdown & Vote Results) - Host only
-            if (widget.isHost) ...[
+            if (_amIActuallyHost) ...[
               const SizedBox(width: 8),
               GestureDetector(
                 onTap: _triggerCountdownForAll,
@@ -3593,8 +3907,8 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
 
             const SizedBox(width: 12),
 
-            // Action button (Invite/Drop for Host, Leave Co-Host for Co-host)
-            if (_amIActuallyHost)
+            // Action button (Invite/Drop for Host, Transfer Host for Host, Leave Co-Host for Co-host)
+            if (_amIActuallyHost) ...[
               GestureDetector(
                 onTap: () {
                   if (_isCoHostConnected) {
@@ -3632,7 +3946,35 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
                     ],
                   ),
                 ),
-              )
+              ),
+              if (_isCoHostConnected) ...[
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: _transferHostAuthorityToCoHost,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade900.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(LucideIcons.crown, color: Colors.amber, size: 14),
+                        const SizedBox(width: 5),
+                        Text(
+                          _isTransferringHost ? "Transferring…" : "Transfer Host",
+                          style: const TextStyle(
+                              color: Colors.amber,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ]
             else if (_amIActuallyCoHost)
               GestureDetector(
                 onTap: () async {

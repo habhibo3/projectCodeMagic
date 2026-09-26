@@ -64,7 +64,7 @@ class _StationDetailScreenState extends State<StationDetailScreen>
         final station = stationSnapshot.data ?? widget.station;
         final currentUserId = AuthService.instance.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
         final isCreator = currentUserId.isNotEmpty && station.creatorId == currentUserId;
-        final coverHeight = kIsWeb ? 442.0 : 338.0;
+        final coverHeight = kIsWeb ? 884.0 : 676.0;
 
         return Scaffold(
           backgroundColor: const Color(0xFF0A0A0A),
@@ -512,11 +512,11 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                       child: TextField(
                         controller: _recordedLivesSearchController,
                         onChanged: (value) {
-                          setState(() => _recordedLivesSearchQuery = value.toLowerCase());
+                          setState(() => _recordedLivesSearchQuery = value.trim().toLowerCase());
                         },
                         decoration: InputDecoration(
-                          hintText: 'Search station broadcasts...',
-                          hintStyle: const TextStyle(color: Colors.white38),
+                          hintText: 'Search broadcasts by title or host name...',
+                          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
                           prefixIcon: const Icon(LucideIcons.search, color: Colors.white38, size: 18),
                           suffixIcon: _recordedLivesSearchQuery.isNotEmpty
                               ? IconButton(
@@ -530,7 +530,7 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                           border: InputBorder.none,
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         ),
-                        style: const TextStyle(color: Colors.white),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
                       ),
                     ),
                   ),
@@ -568,7 +568,7 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                         ),
                         const Spacer(),
                         Text(
-                          '${filteredLives.length} available',
+                          '${filteredLives.length} ${filteredLives.length == 1 ? "broadcast" : "broadcasts"} available',
                           style: const TextStyle(color: Colors.white38, fontSize: 12),
                         ),
                       ],
@@ -603,10 +603,21 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                       Text(
                         _recordedLivesSearchQuery.isEmpty
                             ? 'Go live to record and save your broadcast to this list automatically'
-                            : 'Try searching with a different keyword',
+                            : 'Try searching with a different keyword or host name',
                         style: const TextStyle(fontSize: 13, color: Colors.white30),
                         textAlign: TextAlign.center,
                       ),
+                      if (_recordedLivesSearchQuery.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        TextButton.icon(
+                          onPressed: () {
+                            _recordedLivesSearchController.clear();
+                            setState(() => _recordedLivesSearchQuery = '');
+                          },
+                          icon: const Icon(LucideIcons.x, size: 14, color: AppTheme.primary),
+                          label: const Text('Clear Search', style: TextStyle(color: AppTheme.primary)),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -615,24 +626,18 @@ class _StationDetailScreenState extends State<StationDetailScreen>
               // Web Responsive Grid
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                sliver: SliverLayoutBuilder(
-                  builder: (context, constraints) {
-                    final crossAxisCount = constraints.crossAxisExtent > 1200
-                        ? 4
-                        : (constraints.crossAxisExtent > 800 ? 3 : 2);
-                    return SliverGrid(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                        childAspectRatio: 0.88,
-                      ),
-                      delegate: SliverChildBuilderDelegate(
-                        (ctx, i) => _buildGridRecordedLiveCard(filteredLives[i], station, isCreator),
-                        childCount: filteredLives.length,
-                      ),
-                    );
-                  },
+                sliver: SliverGrid(
+                  key: ValueKey('web_station_grid_${filteredLives.length}_${_recordedLivesSearchQuery}_${_selectedFilterIndex}'),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 360,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.88,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (ctx, i) => _buildGridRecordedLiveCard(filteredLives[i], station, isCreator),
+                    childCount: filteredLives.length,
+                  ),
                 ),
               )
             else if (_isGridView)
@@ -640,6 +645,7 @@ class _StationDetailScreenState extends State<StationDetailScreen>
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 sliver: SliverGrid(
+                  key: ValueKey('mobile_grid_${filteredLives.length}_${_recordedLivesSearchQuery}_${_selectedFilterIndex}'),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
                     crossAxisSpacing: 14,
@@ -653,10 +659,11 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                 ),
               )
             else
-              // Mobile / Default List View (Matching Station Home Page List Cards)
+              // Mobile / Default List View
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 sliver: SliverList(
+                  key: ValueKey('mobile_list_${filteredLives.length}_${_recordedLivesSearchQuery}_${_selectedFilterIndex}'),
                   delegate: SliverChildBuilderDelegate(
                     (ctx, i) => _buildListRecordedLiveCard(filteredLives[i], station, isCreator),
                     childCount: filteredLives.length,
@@ -674,10 +681,12 @@ class _StationDetailScreenState extends State<StationDetailScreen>
   }
 
   List<RecordedLiveModel> _getFilteredRecordedLives(List<RecordedLiveModel> all) {
+    final query = _recordedLivesSearchQuery.trim().toLowerCase();
     var list = all.where((live) {
-      if (_recordedLivesSearchQuery.isEmpty) return true;
-      return live.title.toLowerCase().contains(_recordedLivesSearchQuery) ||
-          live.hostName.toLowerCase().contains(_recordedLivesSearchQuery);
+      if (query.isEmpty) return true;
+      return live.title.toLowerCase().contains(query) ||
+          live.hostName.toLowerCase().contains(query) ||
+          live.id.toLowerCase().contains(query);
     }).toList();
 
     if (_selectedFilterIndex == 1) {

@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:http/http.dart' as http;
 
 /// Authentication service supporting Email & Password auth with Firestore user profiles.
 class AuthService {
@@ -70,6 +72,63 @@ class AuthService {
         });
       }
       return credential;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'email-already-in-use') {
+        // Check if there is an active Firestore profile for this email
+        final existingQuery = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: email.trim())
+            .limit(1)
+            .get();
+
+        // If no user document exists in Firestore, it is an orphaned auth record from a deleted account
+        if (existingQuery.docs.isEmpty) {
+          try {
+            // Request background orphan cleanup via Firestore trigger
+            final cleanupRef = await FirebaseFirestore.instance
+                .collection('user_cleanup_requests')
+                .add({
+              'email': email.trim(),
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+
+            // Wait a brief moment for trigger to delete the orphaned Auth record
+            await Future.delayed(const Duration(milliseconds: 1500));
+            await cleanupRef.delete().catchError((_) => null);
+
+            // Retry registration after purging the orphaned auth entry
+            final retryCredential = await _auth.createUserWithEmailAndPassword(
+              email: email.trim(),
+              password: password,
+            );
+            final uid = retryCredential.user?.uid;
+            if (uid != null) {
+              final ref = FirebaseFirestore.instance.collection('users').doc(uid);
+              await ref.set({
+                'displayName': displayName.trim(),
+                'username': username.trim().toLowerCase(),
+                'email': email.trim(),
+                'photoURL': '',
+                'role': 'contestant',
+                'country': country,
+                'countryFlag': countryFlag,
+                'bio': 'Regular performer.',
+                'createdAt': FieldValue.serverTimestamp(),
+                'totalVotesCast': 0,
+                'subscriptionLevel': 'free',
+                'zip': zip.trim(),
+                'city': city.trim(),
+                'state': state.trim(),
+                'location': '${city.trim()}, ${country.trim()}',
+              });
+            }
+            return retryCredential;
+          } catch (cleanupErr) {
+            debugPrint('[AuthService] Orphan cleanup failed: $cleanupErr');
+          }
+        }
+      }
+      rethrow;
     } catch (e) {
       debugPrint('AuthService signUp error: $e');
       rethrow;
@@ -242,6 +301,67 @@ class AuthService {
       return userCredential;
     } catch (e) {
       debugPrint('AuthService signInWithGoogle error: $e');
+      rethrow;
+    }
+  }
+
+  /// Signs in with Apple (iOS only).
+  Future<UserCredential> signInWithApple() async {
+    try {
+      final appleProvider = OAuthProvider('apple.com');
+      appleProvider.addScope('email');
+      appleProvider.addScope('name');
+
+      final userCredential = await _auth.signInWithProvider(appleProvider);
+      final uid = userCredential.user?.uid;
+
+      debugPrint('[AuthService] Apple Sign-In - UID: $uid');
+
+      if (uid != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+        if (!userDoc.exists) {
+          String baseName = (userCredential.user?.displayName ?? '').replaceAll(RegExp(r'\s+'), '').toLowerCase();
+          if (baseName.isEmpty && userCredential.user?.email != null) {
+            baseName = userCredential.user!.email!.split('@').first.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '');
+          }
+          if (baseName.isEmpty) baseName = 'user';
+
+          String username = baseName;
+          int suffix = 1;
+          while (await isUsernameTaken(username)) {
+            username = '$baseName$suffix';
+            suffix++;
+          }
+
+          final displayName = userCredential.user?.displayName?.isNotEmpty == true
+              ? userCredential.user!.displayName!
+              : (userCredential.user?.email?.split('@').first ?? 'Apple User');
+
+          await FirebaseFirestore.instance.collection('users').doc(uid).set({
+            'displayName': displayName,
+            'email': userCredential.user?.email ?? '',
+            'photoURL': userCredential.user?.photoURL ?? '',
+            'username': username,
+            'role': 'contestant',
+            'country': 'Global',
+            'countryFlag': '🌍',
+            'bio': 'User via Apple Sign In.',
+            'createdAt': FieldValue.serverTimestamp(),
+            'totalVotesCast': 0,
+            'subscriptionLevel': 'free',
+            'zip': '',
+            'city': '',
+            'state': '',
+            'location': 'Global',
+          });
+          debugPrint('[AuthService] Created new user document for Apple user: $username');
+        }
+      }
+
+      return userCredential;
+    } catch (e) {
+      debugPrint('AuthService signInWithApple error: $e');
       rethrow;
     }
   }

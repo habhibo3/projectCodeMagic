@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../data/auth_service.dart';
 import '../data/locale_country.dart';
 import '../theme/app_theme.dart';
+import '../widgets/community_safety_dialog.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -28,6 +30,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _confirmPasswordController = TextEditingController();
   DeviceCountry _selectedCountry = const DeviceCountry(name: 'Tunisia', flag: '🇹🇳');
   bool _isLoading = false;
+  bool _agreedToEula = false;
 
   @override
   void dispose() {
@@ -48,6 +51,17 @@ class _AuthScreenState extends State<AuthScreen> {
     if (_mode == 1 && _passwordController.text != _confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Passwords do not match!'), backgroundColor: Colors.redAccent),
+      );
+      return;
+    }
+
+    if (_mode == 1 && !_agreedToEula) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please read and agree to the Terms of Service & EULA to register.'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
       );
       return;
     }
@@ -134,6 +148,38 @@ class _AuthScreenState extends State<AuthScreen> {
 
     try {
       await auth.signInWithGoogle();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Welcome! 🎉'), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(LucideIcons.alertCircle, color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(child: Text('Error: ${e.toString().replaceAll(RegExp(r'\[.*\]'), '').trim()}')),
+              ],
+            ),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _signInWithApple() async {
+    setState(() => _isLoading = true);
+    final auth = AuthService.instance;
+
+    try {
+      await auth.signInWithApple();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Welcome! 🎉'), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating),
@@ -431,7 +477,51 @@ class _AuthScreenState extends State<AuthScreen> {
                                 ),
                               ),
                             ),
-                          const SizedBox(height: 24),
+                          // EULA & Terms Checkbox (Register mode only)
+                          if (_mode == 1) ...[
+                            const SizedBox(height: 14),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: Checkbox(
+                                    value: _agreedToEula,
+                                    activeColor: AppTheme.primary,
+                                    checkColor: Colors.white,
+                                    onChanged: (val) => setState(() => _agreedToEula = val ?? false),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: GestureDetector(
+                                    onTap: () => CommunitySafetyHelper.showEula(context),
+                                    child: RichText(
+                                      text: const TextSpan(
+                                        style: TextStyle(color: Colors.white70, fontSize: 11, height: 1.35),
+                                        children: [
+                                          TextSpan(text: 'I agree to the '),
+                                          TextSpan(
+                                            text: 'Terms of Service & EULA',
+                                            style: TextStyle(
+                                              color: AppTheme.primary,
+                                              fontWeight: FontWeight.bold,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: ' (Zero tolerance for objectionable content or abusive users).',
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          const SizedBox(height: 20),
 
                           // Submit Button
                           SizedBox(
@@ -462,6 +552,25 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
+
+                          // Apple Sign-In Button (iOS only, Login mode)
+                          if (_mode == 0 && !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) ...[
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: ElevatedButton.icon(
+                                onPressed: _isLoading ? null : _signInWithApple,
+                                icon: const Icon(Icons.apple, size: 22, color: Colors.black),
+                                label: const Text('Sign in with Apple', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: Colors.black,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
 
                           // Google Sign-In Button (Login mode only)
                           if (_mode == 0) ...[

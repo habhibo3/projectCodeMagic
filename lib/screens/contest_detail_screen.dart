@@ -32,6 +32,10 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
   late TabController _tabController;
   Timer? _timer;
 
+  String _entriesSearchQuery = '';
+  final TextEditingController _entriesSearchController = TextEditingController();
+  int _selectedEntryFilterIndex = 0; // 0: All, 1: Top Votes, 2: Top Rated, 3: Videos Only
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +58,7 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _entriesSearchController.dispose();
     _timer?.cancel();
     super.dispose();
   }
@@ -92,7 +97,7 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
   Widget _buildAppBar(BuildContext context) {
     final engine = Provider.of<RankingEngine>(context, listen: false);
     final isCreator = widget.contest.creatorId == engine.currentUserId;
-    final coverHeight = kIsWeb ? 338.0 : 260.0;
+    final coverHeight = kIsWeb ? 676.0 : 520.0;
 
     return SliverAppBar(
       expandedHeight: coverHeight,
@@ -401,6 +406,93 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
     );
   }
 
+  List<ContestEntry> _getFilteredEntries(List<ContestEntry> allEntries) {
+    final query = _entriesSearchQuery.trim().toLowerCase();
+    var list = allEntries.where((entry) {
+      if (query.isEmpty) return true;
+      return entry.userName.toLowerCase().contains(query) ||
+          entry.caption.toLowerCase().contains(query) ||
+          entry.city.toLowerCase().contains(query) ||
+          entry.country.toLowerCase().contains(query);
+    }).toList();
+
+    if (_selectedEntryFilterIndex == 1) {
+      // Top Votes
+      list.sort((a, b) => b.totalVotes.compareTo(a.totalVotes));
+    } else if (_selectedEntryFilterIndex == 2) {
+      // Highest Rated
+      list.sort((a, b) {
+        final cmp = b.averageRating.compareTo(a.averageRating);
+        if (cmp != 0) return cmp;
+        return b.reviewCount.compareTo(a.reviewCount);
+      });
+    } else if (_selectedEntryFilterIndex == 3) {
+      // Videos Only
+      list = list.where((e) => e.type == 'video').toList();
+    }
+
+    return list;
+  }
+
+  Widget _buildEntryFilterChip(String label, int index, int count) {
+    final selected = _selectedEntryFilterIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedEntryFilterIndex = index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? AppTheme.primary : const Color(0xFF1E1E22),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? AppTheme.primary : Colors.white12,
+          ),
+        ),
+        child: Text(
+          '$label ($count)',
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.white70,
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntriesSearchBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: TextField(
+        controller: _entriesSearchController,
+        onChanged: (value) {
+          setState(() => _entriesSearchQuery = value.trim().toLowerCase());
+        },
+        decoration: InputDecoration(
+          hintText: 'Search contestants or videos by name...',
+          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+          prefixIcon: const Icon(LucideIcons.search, color: Colors.white38, size: 18),
+          suffixIcon: _entriesSearchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(LucideIcons.x, color: Colors.white38, size: 16),
+                  onPressed: () {
+                    _entriesSearchController.clear();
+                    setState(() => _entriesSearchQuery = '');
+                  },
+                )
+              : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+    );
+  }
+
   Widget _buildRankingsTab() {
     return Consumer<RankingEngine>(
       builder: (context, engine, _) {
@@ -408,7 +500,9 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
           (c) => c.id == widget.contest.id,
           orElse: () => widget.contest,
         );
-        
+        final filteredEntries = _getFilteredEntries(engine.entries);
+        final videoCount = engine.entries.where((e) => e.type == 'video').length;
+
         if (kIsWeb) {
           return ListView(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -428,42 +522,108 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
                 ],
               ),
               const SizedBox(height: 24),
-              const Text(
-                'LIVE RANKINGS',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 14,
-                  letterSpacing: 1.5,
+
+              // Search Bar & Filter Chips
+              _buildEntriesSearchBar(),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildEntryFilterChip('All', 0, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Top Votes', 1, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Top Rated', 2, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Videos Only', 3, videoCount),
+                  ],
                 ),
               ),
+              const SizedBox(height: 20),
+
+              Row(
+                children: [
+                  const Text(
+                    'LIVE RANKINGS',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${filteredEntries.length} ${filteredEntries.length == 1 ? "entry" : "entries"}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
-              if (engine.entries.isEmpty)
-                const Center(
+              if (filteredEntries.isEmpty)
+                Center(
                   child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 40),
-                    child: Text('No entries yet', style: TextStyle(color: Colors.white38)),
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _entriesSearchQuery.isEmpty ? LucideIcons.videoOff : LucideIcons.search,
+                          size: 48,
+                          color: Colors.white24,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _entriesSearchQuery.isEmpty ? 'No entries yet' : 'No matching contestants or videos found',
+                          style: const TextStyle(color: Colors.white54, fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _entriesSearchQuery.isEmpty
+                              ? 'Entries submitted to this contest will appear here'
+                              : 'Try searching with a different name or keyword',
+                          style: const TextStyle(color: Colors.white30, fontSize: 12),
+                        ),
+                        if (_entriesSearchQuery.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          TextButton.icon(
+                            onPressed: () {
+                              _entriesSearchController.clear();
+                              setState(() => _entriesSearchQuery = '');
+                            },
+                            icon: const Icon(LucideIcons.x, size: 14, color: AppTheme.primary),
+                            label: const Text('Clear Search', style: TextStyle(color: AppTheme.primary)),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 )
               else
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final width = (constraints.maxWidth - (3 * 24)) / 4;
+                    final crossAxisCount = constraints.maxWidth > 1200
+                        ? 4
+                        : (constraints.maxWidth > 800 ? 3 : 2);
+                    final width = (constraints.maxWidth - ((crossAxisCount - 1) * 24)) / crossAxisCount;
                     final cardHeight = (width * 9 / 16) + 125;
                     final ratio = width / cardHeight;
                     return GridView.builder(
+                      key: ValueKey('contest_grid_${filteredEntries.length}_${_entriesSearchQuery}_${_selectedEntryFilterIndex}'),
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
+                        crossAxisCount: crossAxisCount,
                         crossAxisSpacing: 24,
                         mainAxisSpacing: 16,
                         childAspectRatio: ratio,
                       ),
-                      itemCount: engine.entries.length,
+                      itemCount: filteredEntries.length,
                       itemBuilder: (ctx, index) {
-                        final entry = engine.entries[index];
-                        return _buildWebEntryCard(ctx, entry, index + 1, engine);
+                        final entry = filteredEntries[index];
+                        final originalRank = engine.entries.indexOf(entry) + 1;
+                        return _buildWebEntryCard(ctx, entry, originalRank > 0 ? originalRank : index + 1, engine);
                       },
                     );
                   },
@@ -472,23 +632,96 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
             ],
           );
         }
-        
+
         return ListView(
           padding: EdgeInsets.zero,
           children: [
             _buildTimerAndFollow(engine),
             _buildStatsRow(liveContest),
-            const SizedBox(height: 16),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Text('LIVE RANKINGS',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1.5)),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildEntriesSearchBar(),
             ),
             const SizedBox(height: 8),
-            ...List.generate(engine.entries.length, (index) {
-              final entry = engine.entries[index];
-              return _buildEntryRow(context, entry, index + 1, engine);
-            }),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildEntryFilterChip('All', 0, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Top Votes', 1, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Top Rated', 2, engine.entries.length),
+                    const SizedBox(width: 8),
+                    _buildEntryFilterChip('Videos Only', 3, videoCount),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Text('LIVE RANKINGS',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: 1.5)),
+                  const Spacer(),
+                  Text(
+                    '${filteredEntries.length} ${filteredEntries.length == 1 ? "entry" : "entries"}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (filteredEntries.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _entriesSearchQuery.isEmpty ? LucideIcons.videoOff : LucideIcons.search,
+                        size: 48,
+                        color: Colors.white24,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _entriesSearchQuery.isEmpty ? 'No entries yet' : 'No matching contestants or videos found',
+                        style: const TextStyle(color: Colors.white54, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _entriesSearchQuery.isEmpty
+                            ? 'Entries submitted to this contest will appear here'
+                            : 'Try searching with a different name or keyword',
+                        style: const TextStyle(color: Colors.white30, fontSize: 12),
+                      ),
+                      if (_entriesSearchQuery.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        TextButton.icon(
+                          onPressed: () {
+                            _entriesSearchController.clear();
+                            setState(() => _entriesSearchQuery = '');
+                          },
+                          icon: const Icon(LucideIcons.x, size: 14, color: AppTheme.primary),
+                          label: const Text('Clear Search', style: TextStyle(color: AppTheme.primary)),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...List.generate(filteredEntries.length, (index) {
+                final entry = filteredEntries[index];
+                final originalRank = engine.entries.indexOf(entry) + 1;
+                return _buildEntryRow(context, entry, originalRank > 0 ? originalRank : index + 1, engine);
+              }),
             const SizedBox(height: 100),
           ],
         );
@@ -667,13 +900,50 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
     );
   }
 
+  Widget _buildAppleDisclaimerBanner() {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141416),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(LucideIcons.info, color: AppTheme.primary, size: 16),
+              const SizedBox(width: 8),
+              const Text(
+                'Contest Rules & Apple Disclaimer',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '• Apple Inc. is not a sponsor and is not involved in any manner with the contests, sweepstakes, voting, or prizes in this application.\n• All contests and prizes are managed independently by contest creators.\n• Participants must adhere to our Community Safety Guidelines and Terms of Service.',
+            style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.45),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDetailsTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        _buildAppleDisclaimerBanner(),
         _buildDetailCard('📖 About this Contest', widget.contest.description),
         const SizedBox(height: 16),
-        _buildDetailCard('📋 Rules', widget.contest.rules),
+        _buildDetailCard('📋 Official Contest Rules', widget.contest.rules.isNotEmpty ? widget.contest.rules : 'Standard community contest rules apply. Fair voting is enforced by the ranking engine.'),
         const SizedBox(height: 16),
         _buildDetailCard('📅 Schedule', widget.contest.schedule),
         const SizedBox(height: 100),
@@ -694,6 +964,8 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _buildAppleDisclaimerBanner(),
+            const SizedBox(height: 14),
             if (liveContest.prizes.isEmpty)
               _buildDetailCard('🏆 Prizes', liveContest.prize)
             else

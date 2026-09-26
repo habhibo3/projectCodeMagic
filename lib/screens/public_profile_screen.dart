@@ -7,6 +7,7 @@ import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
 import '../widgets/video_player_widget.dart';
+import '../widgets/community_safety_dialog.dart';
 import 'post_detail_screen.dart';
 import 'edit_post_screen.dart';
 
@@ -496,6 +497,55 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
             letterSpacing: 1.5,
           ),
         ),
+        actions: [
+          if (!isMe)
+            PopupMenuButton<String>(
+              icon: const Icon(LucideIcons.moreVertical, color: Colors.white70),
+              color: const Color(0xFF1E1E22),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onSelected: (value) {
+                if (value == 'report') {
+                  CommunitySafetyHelper.showReportDialog(
+                    context,
+                    targetId: widget.userId,
+                    targetType: 'user',
+                    targetName: 'User Profile (${widget.userId})',
+                  );
+                } else if (value == 'block') {
+                  CommunitySafetyHelper.showBlockUserDialog(
+                    context,
+                    userId: widget.userId,
+                    userName: 'this user',
+                    onUserBlocked: () {
+                      if (mounted) Navigator.pop(context);
+                    },
+                  );
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.flag, color: Colors.orangeAccent, size: 16),
+                      SizedBox(width: 8),
+                      Text('Report User', style: TextStyle(color: Colors.white, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'block',
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.userX, color: Colors.redAccent, size: 16),
+                      SizedBox(width: 8),
+                      Text('Block User', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
       body: StreamBuilder<UserModel?>(
         stream: engine.watchUserProfile(widget.userId),

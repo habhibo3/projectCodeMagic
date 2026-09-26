@@ -383,12 +383,12 @@ class _StationListScreenState extends State<StationListScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: SizedBox(
-                width: 70,
-                height: 50,
+                width: 140,
+                height: 100,
                 child: MediaContentPreview(
                   type: station.coverType,
                   contentUrl: station.image,
-                  height: 50,
+                  height: 100,
                   autoPlayVideo: false,
                 ),
               ),
@@ -972,7 +972,7 @@ class _WebStationAdvertiserBannerState extends State<_WebStationAdvertiserBanner
 
     return Container(
       margin: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-      height: 494,
+      height: 988,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         color: const Color(0xFF141416),
@@ -1008,7 +1008,7 @@ class _WebStationAdvertiserBannerState extends State<_WebStationAdvertiserBanner
                       MediaContentPreview(
                         type: station.coverType,
                         contentUrl: station.image,
-                        height: 494,
+                        height: 988,
                         fit: BoxFit.cover,
                         autoPlayVideo: true,
                         forceAutoPlay: true,

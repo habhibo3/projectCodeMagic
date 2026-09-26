@@ -1,8 +1,9 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../models/user.dart';
-import '../models/entry.dart';
-import '../models/post.dart';
 
 class AdminService {
   FirebaseFirestore? _db;
@@ -118,7 +119,36 @@ class AdminService {
     if (!_isInitialized || _db == null) return;
     
     try {
-      // Delete user document
+      debugPrint('[AdminService] Starting full deletion for user: $userId');
+
+      // 1. Trigger server-side deletion (Firebase Auth + Firestore)
+      try {
+        final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+        if (idToken != null) {
+          final projectId = _db?.app.options.projectId ?? 'contest-app-94050';
+          final uri = Uri.parse(
+            'https://us-central1-$projectId.cloudfunctions.net/deleteUserByAdmin',
+          );
+          final response = await http.post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $idToken',
+            },
+            body: jsonEncode({'userId': userId}),
+          );
+          debugPrint(
+            '[AdminService] deleteUserByAdmin response: ${response.statusCode} - ${response.body}',
+          );
+        }
+      } catch (cloudErr) {
+        debugPrint(
+          '[AdminService] Cloud Function invocation notice (using client cascade): $cloudErr',
+        );
+      }
+
+      // 2. Cascade delete Firestore data directly
+      // Delete user document (which also fires onUserDeleted trigger in Cloud Functions)
       await _db!.collection('users').doc(userId).delete();
       
       // Delete user's posts
@@ -129,21 +159,41 @@ class AdminService {
       for (final doc in postsSnapshot.docs) {
         await doc.reference.delete();
       }
+
+      // Delete user's stations and recorded live sessions
+      final stationsSnapshot = await _db!.collection('stations')
+          .where('creatorId', isEqualTo: userId)
+          .get();
+      for (final stDoc in stationsSnapshot.docs) {
+        final livesSnapshot = await stDoc.reference.collection('recorded_lives').get();
+        for (final lDoc in livesSnapshot.docs) {
+          await lDoc.reference.delete();
+        }
+        await stDoc.reference.delete();
+      }
       
-      // Delete user's contest entries
+      // Delete user's contests & contest entries
       final contestsSnapshot = await _db!.collection('contests').get();
       for (final contestDoc in contestsSnapshot.docs) {
+        final isCreator = contestDoc.data()['creatorId'] == userId;
         final entriesSnapshot = await _db!
             .collection('contests')
             .doc(contestDoc.id)
             .collection('entries')
-            .where('userId', isEqualTo: userId)
             .get();
         
         for (final entryDoc in entriesSnapshot.docs) {
-          await entryDoc.reference.delete();
+          if (isCreator || entryDoc.data()['userId'] == userId) {
+            await entryDoc.reference.delete();
+          }
+        }
+
+        if (isCreator) {
+          await contestDoc.reference.delete();
         }
       }
+
+      debugPrint('[AdminService] User $userId and all associated data completely deleted.');
     } catch (e) {
       debugPrint('Error deleting user: $e');
     }
