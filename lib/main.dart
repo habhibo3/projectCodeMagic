@@ -31,13 +31,17 @@ import 'widgets/delete_account_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Only lock orientation on mobile
+  
   if (!kIsWeb) {
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    try {
+      await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    } catch (e) {
+      debugPrint('Error setting orientations: $e');
+    }
   }
 
-
-
+  String? initError;
+  try {
     FirebaseOptions firebaseOptions;
     switch (currentEnv) {
       case Env.staging:
@@ -52,11 +56,21 @@ void main() async {
         options: firebaseOptions,
       );
     }
+  } catch (e, stack) {
+    debugPrint('Firebase custom options init failed: $e\n$stack');
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+    } catch (fallbackError) {
+      debugPrint('Firebase fallback default init failed: $fallbackError');
+      initError = 'Firebase initialization error: $e';
+    }
+  }
 
-  runApp(const MlivecastApp());
+  runApp(MlivecastApp(initializationError: initError));
 
-  // Auto-seed initial mock data on staging in the background without blocking UI startup
-  if (currentEnv == Env.staging) {
+  if (initError == null && currentEnv == Env.staging) {
     FirebaseSeeder.seedIfEmpty().catchError((e) {
       debugPrint('[Staging Seeder] $e');
     });
@@ -64,7 +78,8 @@ void main() async {
 }
 
 class MlivecastApp extends StatelessWidget {
-  const MlivecastApp({super.key});
+  final String? initializationError;
+  const MlivecastApp({super.key, this.initializationError});
 
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -75,7 +90,45 @@ class MlivecastApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       navigatorKey: navigatorKey,
-      home: const AuthWrapper(),
+      home: initializationError != null
+          ? _InitializationErrorScreen(error: initializationError!)
+          : const AuthWrapper(),
+    );
+  }
+}
+
+class _InitializationErrorScreen extends StatelessWidget {
+  final String error;
+  const _InitializationErrorScreen({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0A0A),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.redAccent, size: 54),
+                const SizedBox(height: 16),
+                const Text(
+                  'Initialization Error',
+                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  error,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
