@@ -16,6 +16,7 @@ import '../screens/create_post_screen.dart';
 import '../screens/live_stream_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import '../widgets/media_content_preview.dart';
 import 'sponsorship_screen.dart';
 import 'public_profile_screen.dart';
 
