@@ -16,7 +16,8 @@ import '../widgets/media_content_preview.dart';
 import 'live_stream_screen.dart';
 import 'watch_recorded_live_screen.dart';
 import '../engine/ranking_engine.dart';
-import '../widgets/station_upload_banner_widget.dart';
+import 'sponsorship_screen.dart';
+import 'public_profile_screen.dart';
 
 class StationDetailScreen extends StatefulWidget {
   final StationModel station;
@@ -271,15 +272,32 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 12,
-                        backgroundImage: AvatarHelper.getSafeAvatarProvider(station.creatorAvatar),
-                        backgroundColor: Colors.grey.shade900,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Hosted by ${station.creatorName}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                      GestureDetector(
+                        onTap: () {
+                          if (station.creatorId.isNotEmpty) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PublicProfileScreen(userId: station.creatorId),
+                              ),
+                            );
+                          }
+                        },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircleAvatar(
+                              radius: 12,
+                              backgroundImage: AvatarHelper.getSafeAvatarProvider(station.creatorAvatar),
+                              backgroundColor: Colors.grey.shade900,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Hosted by ${station.creatorName}',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
                       ),
                       const Spacer(),
                       const Icon(LucideIcons.eye, size: 14, color: Colors.white60),
@@ -852,24 +870,37 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
 
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 12,
-                        backgroundImage: AvatarHelper.getSafeAvatarProvider(recorded.hostAvatar.isNotEmpty ? recorded.hostAvatar : station.creatorAvatar),
-                        backgroundColor: Colors.grey.shade900,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Hosted by ${recorded.hostName.isNotEmpty ? recorded.hostName : station.creatorName}',
-                        style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _formatDate(recorded.recordedAt),
-                        style: const TextStyle(color: Colors.white38, fontSize: 11),
-                      ),
-                    ],
+                  GestureDetector(
+                    onTap: () {
+                      final hostId = recorded.hostId.isNotEmpty ? recorded.hostId : station.creatorId;
+                      if (hostId.isNotEmpty) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PublicProfileScreen(userId: hostId),
+                          ),
+                        );
+                      }
+                    },
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 12,
+                          backgroundImage: AvatarHelper.getSafeAvatarProvider(recorded.hostAvatar.isNotEmpty ? recorded.hostAvatar : station.creatorAvatar),
+                          backgroundColor: Colors.grey.shade900,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Hosted by ${recorded.hostName.isNotEmpty ? recorded.hostName : station.creatorName}',
+                          style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _formatDate(recorded.recordedAt),
+                          style: const TextStyle(color: Colors.white38, fontSize: 11),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -1003,14 +1034,27 @@ class _StationDetailScreenState extends State<StationDetailScreen>
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        'by ${recorded.hostName.isNotEmpty ? recorded.hostName : station.creatorName}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white60,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
+                      GestureDetector(
+                        onTap: () {
+                          final hostId = recorded.hostId.isNotEmpty ? recorded.hostId : station.creatorId;
+                          if (hostId.isNotEmpty) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PublicProfileScreen(userId: hostId),
+                              ),
+                            );
+                          }
+                        },
+                        child: Text(
+                          'by ${recorded.hostName.isNotEmpty ? recorded.hostName : station.creatorName}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 6),
@@ -1086,42 +1130,62 @@ class _StationDetailScreenState extends State<StationDetailScreen>
             style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.5),
           ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF141414),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white12),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundImage: AvatarHelper.getSafeAvatarProvider(station.creatorAvatar),
-                  backgroundColor: Colors.grey.shade900,
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        station.creatorName,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Station Owner & Host',
-                        style: TextStyle(color: AppTheme.primary, fontSize: 12),
-                      ),
-                    ],
+          GestureDetector(
+            onTap: () {
+              if (station.creatorId.isNotEmpty) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PublicProfileScreen(userId: station.creatorId),
                   ),
-                ),
-              ],
+                );
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF141414),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundImage: AvatarHelper.getSafeAvatarProvider(station.creatorAvatar),
+                    backgroundColor: Colors.grey.shade900,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          station.creatorName,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Station Owner & Host',
+                          style: TextStyle(color: AppTheme.primary, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(LucideIcons.chevronRight, color: Colors.white38, size: 18),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 24),
           _buildStationReviews(station),
+          const SizedBox(height: 18),
+          SponsorshipMarketplaceSection(
+            ownerType: 'STATION',
+            ownerId: station.id,
+            ownerTitle: station.title,
+            ownerUserId: station.creatorId,
+          ),
         ],
       ),
     );

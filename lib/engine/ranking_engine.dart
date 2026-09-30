@@ -57,7 +57,13 @@ class RankingEngine extends ChangeNotifier {
   bool _hasMoreFeed = true;
   dynamic _lastFeedDocument;
 
-  List<PostModel> get feedPosts => _feedPosts;
+  // --- Blocked Users & Safety ---
+  List<String> _blockedUserIds = [];
+  List<String> get blockedUserIds => List.unmodifiable(_blockedUserIds);
+  bool isUserBlocked(String userId) => _blockedUserIds.contains(userId);
+
+  List<PostModel> get feedPosts =>
+      _feedPosts.where((p) => !_blockedUserIds.contains(p.userId)).toList();
   bool get isLoadingFeed => _isLoadingFeed;
   bool get hasMoreFeed => _hasMoreFeed;
 
@@ -87,7 +93,7 @@ class RankingEngine extends ChangeNotifier {
         }).toList();
 
         for (final post in newPosts) {
-          if (!_feedPosts.any((p) => p.id == post.id)) {
+          if (!_blockedUserIds.contains(post.userId) && !_feedPosts.any((p) => p.id == post.id)) {
             _feedPosts.add(post);
           }
         }
@@ -132,6 +138,7 @@ class RankingEngine extends ChangeNotifier {
   StreamSubscription? _entriesSub;
   StreamSubscription? _userSub;
   StreamSubscription? _followedSub;
+  StreamSubscription? _blockedSub;
 
   String? _currentContestId;
   String? _lastViewedEntryId;
@@ -150,7 +157,8 @@ class RankingEngine extends ChangeNotifier {
 
   UserModel? get currentUserProfile => _currentUserProfile;
   List<ContestModel> get contests => List.unmodifiable(_contests);
-  List<ContestEntry> get entries => List.unmodifiable(_entries);
+  List<ContestEntry> get entries =>
+      List.unmodifiable(_entries.where((e) => !_blockedUserIds.contains(e.userId)).toList());
   List<VoteActivity> get voteActivity => List.unmodifiable(_voteActivity);
 
   List<String> _followedContestIds = [];
@@ -169,7 +177,7 @@ class RankingEngine extends ChangeNotifier {
     _voteActivity.clear();
 
     _entriesSub = _firebaseService.getEntries(contestId).listen((fetchedEntries) {
-      _entries = fetchedEntries;
+      _entries = fetchedEntries.where((e) => !_blockedUserIds.contains(e.userId)).toList();
       _safeNotifyListeners();
     });
   }
@@ -193,6 +201,34 @@ class RankingEngine extends ChangeNotifier {
       _followedContestIds = ids;
       _safeNotifyListeners();
     });
+
+    _blockedSub?.cancel();
+    _blockedSub = _firebaseService.getBlockedUserIds(currentUserId).listen((ids) {
+      _blockedUserIds = ids;
+      _feedPosts.removeWhere((p) => ids.contains(p.userId));
+      _entries.removeWhere((e) => ids.contains(e.userId));
+      _safeNotifyListeners();
+    });
+  }
+
+  Future<void> blockUser(String targetUserId, String targetUserName) async {
+    if (!_blockedUserIds.contains(targetUserId)) {
+      _blockedUserIds.add(targetUserId);
+      _feedPosts.removeWhere((p) => p.userId == targetUserId);
+      _entries.removeWhere((e) => e.userId == targetUserId);
+      _safeNotifyListeners();
+    }
+    await _firebaseService.blockUser(currentUserId, targetUserId, targetUserName);
+  }
+
+  Future<void> unblockUser(String targetUserId) async {
+    _blockedUserIds.remove(targetUserId);
+    _safeNotifyListeners();
+    await _firebaseService.unblockUser(currentUserId, targetUserId);
+    await refreshFeed();
+    if (_currentContestId != null) {
+      loadContestEntries(_currentContestId!);
+    }
   }
 
   Future<bool> addVote(String entryId) async {
@@ -887,6 +923,7 @@ class RankingEngine extends ChangeNotifier {
     _entriesSub?.cancel();
     _userSub?.cancel();
     _followedSub?.cancel();
+    _blockedSub?.cancel();
     _simulationTimer?.cancel();
     for (final timer in _activeTimers) {
       timer.cancel();

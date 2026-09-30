@@ -474,109 +474,178 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final engine = Provider.of<RankingEngine>(context, listen: false);
+    return Consumer<RankingEngine>(
+      builder: (context, engine, _) {
+        final isMe = widget.userId == engine.currentUserId;
+        final isBlocked = engine.isUserBlocked(widget.userId);
 
-    // If it's the current user, we can just show a indicator or allow visiting themselves
-    final isMe = widget.userId == engine.currentUserId;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF09090B),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF09090B),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(LucideIcons.chevronLeft, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'USER PROFILE',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w900,
-            fontSize: 14,
-            letterSpacing: 1.5,
-          ),
-        ),
-        actions: [
-          if (!isMe)
-            PopupMenuButton<String>(
-              icon: const Icon(LucideIcons.moreVertical, color: Colors.white70),
-              color: const Color(0xFF1E1E22),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              onSelected: (value) {
-                if (value == 'report') {
-                  CommunitySafetyHelper.showReportDialog(
-                    context,
-                    targetId: widget.userId,
-                    targetType: 'user',
-                    targetName: 'User Profile (${widget.userId})',
-                  );
-                } else if (value == 'block') {
-                  CommunitySafetyHelper.showBlockUserDialog(
-                    context,
-                    userId: widget.userId,
-                    userName: 'this user',
-                    onUserBlocked: () {
-                      if (mounted) Navigator.pop(context);
-                    },
-                  );
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'report',
-                  child: Row(
-                    children: [
-                      Icon(LucideIcons.flag, color: Colors.orangeAccent, size: 16),
-                      SizedBox(width: 8),
-                      Text('Report User', style: TextStyle(color: Colors.white, fontSize: 13)),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'block',
-                  child: Row(
-                    children: [
-                      Icon(LucideIcons.userX, color: Colors.redAccent, size: 16),
-                      SizedBox(width: 8),
-                      Text('Block User', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
-                    ],
-                  ),
-                ),
-              ],
+        return Scaffold(
+          backgroundColor: const Color(0xFF09090B),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF09090B),
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(LucideIcons.chevronLeft, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
             ),
-        ],
-      ),
-      body: StreamBuilder<UserModel?>(
-        stream: engine.watchUserProfile(widget.userId),
-        builder: (context, userSnapshot) {
-          if (userSnapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
-          }
-          final user = userSnapshot.data;
-          if (user == null) {
-            return const Center(
-              child: Text(
-                'User not found.',
-                style: TextStyle(color: Colors.white38, fontSize: 14),
+            title: const Text(
+              'USER PROFILE',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+                letterSpacing: 1.5,
               ),
-            );
-          }
+            ),
+            actions: [
+              if (!isMe)
+                PopupMenuButton<String>(
+                  icon: const Icon(LucideIcons.moreVertical, color: Colors.white70),
+                  color: const Color(0xFF1E1E22),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  onSelected: (value) async {
+                    if (value == 'report') {
+                      CommunitySafetyHelper.showReportDialog(
+                        context,
+                        targetId: widget.userId,
+                        targetType: 'user',
+                        targetName: 'User Profile (${widget.userId})',
+                      );
+                    } else if (value == 'block') {
+                      CommunitySafetyHelper.showBlockUserDialog(
+                        context,
+                        userId: widget.userId,
+                        userName: 'this user',
+                        onUserBlocked: () {
+                          engine.blockUser(widget.userId, 'this user');
+                        },
+                      );
+                    } else if (value == 'unblock') {
+                      await engine.unblockUser(widget.userId);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('User unblocked.'),
+                            backgroundColor: Colors.green,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'report',
+                      child: Row(
+                        children: [
+                          Icon(LucideIcons.flag, color: Colors.orangeAccent, size: 16),
+                          SizedBox(width: 8),
+                          Text('Report User', style: TextStyle(color: Colors.white, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    if (isBlocked)
+                      const PopupMenuItem(
+                        value: 'unblock',
+                        child: Row(
+                          children: [
+                            Icon(LucideIcons.userCheck, color: Colors.greenAccent, size: 16),
+                            SizedBox(width: 8),
+                            Text('Unblock User', style: TextStyle(color: Colors.greenAccent, fontSize: 13)),
+                          ],
+                        ),
+                      )
+                    else
+                      const PopupMenuItem(
+                        value: 'block',
+                        child: Row(
+                          children: [
+                            Icon(LucideIcons.userX, color: Colors.redAccent, size: 16),
+                            SizedBox(width: 8),
+                            Text('Block User', style: TextStyle(color: Colors.redAccent, fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+          body: StreamBuilder<UserModel?>(
+            stream: engine.watchUserProfile(widget.userId),
+            builder: (context, userSnapshot) {
+              if (userSnapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
+              }
+              final user = userSnapshot.data;
+              if (user == null) {
+                return const Center(
+                  child: Text(
+                    'User not found.',
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
+                  ),
+                );
+              }
 
-          debugPrint('[PublicProfileScreen] User data received:');
-          debugPrint('[PublicProfileScreen] - UID: ${user.uid}');
-          debugPrint('[PublicProfileScreen] - Display Name: ${user.displayName}');
-          debugPrint('[PublicProfileScreen] - Email: ${user.email}');
-          debugPrint('[PublicProfileScreen] - Email is empty: ${user.email.isEmpty}');
+              if (isBlocked) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: 36,
+                          backgroundColor: Colors.redAccent.withOpacity(0.15),
+                          child: const Icon(LucideIcons.userX, color: Colors.redAccent, size: 36),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          user.displayName.isNotEmpty ? user.displayName : 'Blocked User',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'You have blocked this user.\nTheir posts and content are hidden from your feed.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.4),
+                        ),
+                        const SizedBox(height: 20),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          ),
+                          icon: const Icon(LucideIcons.userCheck, size: 16),
+                          label: const Text('Unblock User', style: TextStyle(fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await engine.unblockUser(widget.userId);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('${user.displayName} unblocked.'),
+                                  backgroundColor: Colors.green,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
 
-          final isPremium = user.subscriptionLevel == 'premium';
+              final isPremium = user.subscriptionLevel == 'premium';
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 1. Elegent Profile Header Card
+              return SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 1. Elegent Profile Header Card
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
@@ -802,9 +871,11 @@ class _PublicProfileScreenState extends State<PublicProfileScreen> {
                 ),
               ],
             ),
-          );
-        },
-      ),
-    );
-  }
+            );
+          },
+        ),
+      );
+    },
+  );
+}
 }

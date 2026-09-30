@@ -16,7 +16,8 @@ import '../screens/create_post_screen.dart';
 import '../screens/live_stream_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
-import '../widgets/media_content_preview.dart';
+import 'sponsorship_screen.dart';
+import 'public_profile_screen.dart';
 
 class ContestDetailScreen extends StatefulWidget {
   final ContestModel contest;
@@ -319,39 +320,62 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundImage: entry.userAvatar.isNotEmpty
-                    ? AvatarHelper.getSafeAvatarProvider(entry.userAvatar)
-                    : null,
-                backgroundColor: Colors.grey.shade900,
-                child: entry.userAvatar.isEmpty
-                    ? const Icon(LucideIcons.user, size: 16, color: Colors.white60)
-                    : null,
+              GestureDetector(
+                onTap: () {
+                  if (entry.userId.isNotEmpty) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PublicProfileScreen(userId: entry.userId),
+                      ),
+                    );
+                  }
+                },
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundImage: entry.userAvatar.isNotEmpty
+                      ? AvatarHelper.getSafeAvatarProvider(entry.userAvatar)
+                      : null,
+                  backgroundColor: Colors.grey.shade900,
+                  child: entry.userAvatar.isEmpty
+                      ? const Icon(LucideIcons.user, size: 16, color: Colors.white60)
+                      : null,
+                ),
               ),
-              const SizedBox(width: 12),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Text(entry.countryFlag, style: const TextStyle(fontSize: 16)),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            entry.userName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                    GestureDetector(
+                      onTap: () {
+                        if (entry.userId.isNotEmpty) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => PublicProfileScreen(userId: entry.userId),
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          );
+                        }
+                      },
+                      child: Row(
+                        children: [
+                          Text(entry.countryFlag, style: const TextStyle(fontSize: 16)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              entry.userName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -868,30 +892,42 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  Text(entry.countryFlag, style: const TextStyle(fontSize: 24)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+            GestureDetector(
+              onTap: () {
+                if (entry.userId.isNotEmpty) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PublicProfileScreen(userId: entry.userId),
+                    ),
+                  );
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Text(entry.countryFlag, style: const TextStyle(fontSize: 24)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(entry.userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 4),
+                          Text(entry.caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Text(entry.userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                        const SizedBox(height: 4),
-                        Text(entry.caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                        Text('${entry.totalVotes}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppTheme.accent)),
+                        const Text('VOTES', style: TextStyle(fontSize: 9, letterSpacing: 1, color: Colors.white54)),
                       ],
                     ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('${entry.totalVotes}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppTheme.accent)),
-                      const Text('VOTES', style: TextStyle(fontSize: 9, letterSpacing: 1, color: Colors.white54)),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -943,9 +979,55 @@ class _ContestDetailScreenState extends State<ContestDetailScreen>
         _buildAppleDisclaimerBanner(),
         _buildDetailCard('📖 About this Contest', widget.contest.description),
         const SizedBox(height: 16),
+        if (widget.contest.creatorId.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF141416),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: Row(
+              children: [
+                const Icon(LucideIcons.userCheck, color: AppTheme.primary, size: 18),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Contest Organizer',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  ),
+                  icon: const Icon(LucideIcons.externalLink, size: 14),
+                  label: const Text('View Profile', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PublicProfileScreen(userId: widget.contest.creatorId),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         _buildDetailCard('📋 Official Contest Rules', widget.contest.rules.isNotEmpty ? widget.contest.rules : 'Standard community contest rules apply. Fair voting is enforced by the ranking engine.'),
         const SizedBox(height: 16),
         _buildDetailCard('📅 Schedule', widget.contest.schedule),
+        const SizedBox(height: 16),
+        SponsorshipMarketplaceSection(
+          ownerType: 'CONTEST',
+          ownerId: widget.contest.id,
+          ownerTitle: widget.contest.title,
+          ownerUserId: widget.contest.creatorId,
+        ),
         const SizedBox(height: 100),
       ],
     );

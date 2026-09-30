@@ -509,6 +509,63 @@ class FirebaseService {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // BLOCKED USERS & MODERATION
+  // -------------------------------------------------------------------------
+  Stream<List<String>> getBlockedUserIds(String currentUserId) {
+    if (!_isInitialized || _db == null || currentUserId.isEmpty) {
+      return Stream.value([]);
+    }
+    return _db!
+        .collection('users')
+        .doc(currentUserId)
+        .collection('blocked_users')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => doc.id).toList());
+  }
+
+  Future<void> blockUser(String currentUserId, String targetUserId, String targetUserName) async {
+    if (!_isInitialized || _db == null || currentUserId.isEmpty || targetUserId.isEmpty) return;
+    try {
+      await _db!
+          .collection('users')
+          .doc(currentUserId)
+          .collection('blocked_users')
+          .doc(targetUserId)
+          .set({
+        'blockedUserId': targetUserId,
+        'blockedUserName': targetUserName,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await _db!.collection('reports').add({
+        'targetId': targetUserId,
+        'targetType': 'user_block',
+        'targetName': targetUserName,
+        'reason': 'User Blocked by $currentUserId',
+        'reportedBy': currentUserId,
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error in FirebaseService.blockUser: $e');
+    }
+  }
+
+  Future<void> unblockUser(String currentUserId, String targetUserId) async {
+    if (!_isInitialized || _db == null || currentUserId.isEmpty || targetUserId.isEmpty) return;
+    try {
+      await _db!
+          .collection('users')
+          .doc(currentUserId)
+          .collection('blocked_users')
+          .doc(targetUserId)
+          .delete();
+    } catch (e) {
+      debugPrint('Error in FirebaseService.unblockUser: $e');
+    }
+  }
+
   Future<String> uploadPostMedia(
     String userId, 
     File file, {
