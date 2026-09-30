@@ -8,6 +8,20 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const auth = admin.auth();
 
+// LiveKit usage tracking and token issuance are isolated from the existing
+// account-cleanup triggers so the current app session flow remains untouched.
+const livekitUsage = require("./livekit_usage");
+const sponsorship = require("./sponsorship");
+
+exports.issueLiveKitToken = livekitUsage.issueLiveKitToken;
+exports.livekitWebhook = livekitUsage.livekitWebhook;
+exports.reconcileLiveKitUsage = livekitUsage.reconcileLiveKitUsage;
+exports.sponsorshipApi = sponsorship.sponsorshipApi;
+exports.stripeSponsorshipWebhook = sponsorship.stripeSponsorshipWebhook;
+exports.expireSponsorships = sponsorship.expireSponsorships;
+exports.onContestSponsorshipEndDateChanged =
+  sponsorship.onContestSponsorshipEndDateChanged;
+
 /**
  * Helper function to completely purge all user data from Firestore collections.
  * @param {string} userId - The user ID to delete.

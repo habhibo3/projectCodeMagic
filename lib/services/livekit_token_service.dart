@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:crypto/crypto.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'agora_web_service.dart';
 
 class LiveKitRoomCredentials {
@@ -23,84 +25,52 @@ class LiveKitTokenService {
 
   LiveKitTokenService._internal();
 
-  // LiveKit Cloud credentials (configured for wss://mlivecast-kutdj3il.livekit.cloud)
+  // These are public connection details. The signing secret stays in Cloud Functions.
   static String serverUrl = 'wss://mlivecast-kutdj3il.livekit.cloud';
-  static String apiKey = 'APImmymJMaxCWrz';
-  static String apiSecret = '1erEac9A5BQp9TpyrgwBFwCgbfwCJPxVZDmjz5S81xZ';
-
-  /// Generates a valid LiveKit JWT Token signed with HS256 algorithm.
-  static String createToken({
-    required String roomName,
-    required String participantIdentity,
-    String? key,
-    String? secret,
-  }) {
-    final k = key ?? apiKey;
-    final s = secret ?? apiSecret;
-
-    if (k.isEmpty || s.isEmpty) {
-      return '';
-    }
-
-    final header = {
-      'alg': 'HS256',
-      'typ': 'JWT',
-    };
-
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final payload = {
-      'exp': now + 86400, // 24 hours validity
-      'iss': k,
-      'sub': participantIdentity,
-      'nbf': now - 5,
-      'video': {
-        'room': roomName,
-        'roomJoin': true,
-        'roomCreate': true,
-        'roomAdmin': true,
-        'canPublish': true,
-        'canSubscribe': true,
-        'canPublishData': true,
-        'canPublishSources': ['camera', 'microphone', 'screen_share', 'screen_share_audio'],
-      },
-    };
-
-    String base64UrlEncodeNoPadding(List<int> bytes) {
-      return base64Url.encode(bytes).replaceAll('=', '');
-    }
-
-    final headerB64 = base64UrlEncodeNoPadding(utf8.encode(jsonEncode(header)));
-    final payloadB64 = base64UrlEncodeNoPadding(utf8.encode(jsonEncode(payload)));
-    final dataToSign = '$headerB64.$payloadB64';
-
-    final hmac = Hmac(sha256, utf8.encode(s));
-    final signature = hmac.convert(utf8.encode(dataToSign));
-    final sigB64 = base64UrlEncodeNoPadding(signature.bytes);
-
-    return '$dataToSign.$sigB64';
-  }
 
   Future<LiveKitRoomCredentials> getRoomCredentials({
     required String contestId,
     String? entryId,
-    String? userId,
     bool isHost = false,
     bool isCoHost = false,
+    bool isStation = false,
   }) async {
-    final roomName = entryId != null ? 'contest_${contestId}_$entryId' : 'station_$contestId';
-    final rolePrefix = isHost ? 'host' : (isCoHost ? 'cohost' : 'viewer');
-    final uidStr = userId != null && userId.isNotEmpty ? userId : 'anon_${DateTime.now().millisecondsSinceEpoch}';
-    final identity = '${rolePrefix}_$uidStr';
-
-    final token = createToken(
-      roomName: roomName,
-      participantIdentity: identity,
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final idToken = currentUser == null ? null : await currentUser.getIdToken();
+    final projectId = Firebase.app().options.projectId;
+    final uri = Uri.parse(
+      'https://us-central1-$projectId.cloudfunctions.net/issueLiveKitToken',
     );
+    final response = await http
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (idToken != null) 'Authorization': 'Bearer $idToken',
+          },
+          body: jsonEncode({
+            'roomKind': isStation ? 'station' : (entryId != null ? 'entry' : 'organizer'),
+            'contestId': contestId,
+            if (isStation) 'stationId': contestId,
+            if (entryId != null) 'entryId': entryId,
+            'isHost': isHost,
+            'isCoHost': isCoHost,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (response.statusCode != 200) {
+      throw Exception('LiveKit token request failed (${response.statusCode}).');
+    }
+    final result = jsonDecode(response.body) as Map<String, dynamic>;
+    final token = result['participantToken'] as String? ?? '';
+    if (token.isEmpty) throw Exception('LiveKit returned an empty participant token.');
+    serverUrl = result['serverUrl'] as String? ?? serverUrl;
 
     return LiveKitRoomCredentials(
       serverUrl: serverUrl,
       participantToken: token,
-      canPublish: true,
+      canPublish: result['canPublish'] as bool? ?? false,
     );
   }
 

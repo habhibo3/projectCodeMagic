@@ -1034,9 +1034,9 @@ class _LiveStreamScreenState extends State<LiveStreamScreen>
       final credentials = await LiveKitTokenService().getRoomCredentials(
         contestId: widget.contest.id,
         entryId: _entryId,
-        userId: _currentUserId,
         isHost: widget.isHost,
         isCoHost: widget.isCoHost,
+        isStation: _isStationLive,
       );
 
       if (credentials.participantToken.isEmpty) {

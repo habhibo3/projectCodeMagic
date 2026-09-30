@@ -10,6 +10,7 @@ import 'admin_moderation_screen.dart';
 import 'admin_analytics_screen.dart';
 import 'admin_anticheat_screen.dart';
 import 'admin_subscriptions_screen.dart';
+import 'sponsorship_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -215,6 +216,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             label: 'Subscriptions',
             index: 5,
           ),
+          _buildNavItem(
+            icon: LucideIcons.shield,
+            label: 'Sponsor Review',
+            index: 6,
+          ),
           const Spacer(),
           // Back to app
           Padding(
@@ -298,6 +304,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         return const AdminAnalyticsScreen();
       case 5:
         return const AdminSubscriptionsScreen();
+      case 6:
+        return const PendingSponsorshipArtworkScreen();
       default:
         return _buildDashboardOverview();
     }

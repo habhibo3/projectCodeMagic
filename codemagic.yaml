@@ -19,7 +19,7 @@ workflows:
           xcode-project use-profiles
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner || (cat /tmp/xcodebuild_logs/*.log && exit 1)
       - name: Upload to TestFlight
         script: |
           app-store-connect publish \
@@ -55,7 +55,7 @@ workflows:
           xcode-project use-profiles
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner || (cat /tmp/xcodebuild_logs/*.log && exit 1)
       - name: Upload to TestFlight
         script: |
           app-store-connect publish \
