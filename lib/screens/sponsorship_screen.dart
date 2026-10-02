@@ -58,24 +58,74 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0A0A0A),
-        title: Text('Sponsors · ${widget.ownerTitle}', maxLines: 1, overflow: TextOverflow.ellipsis),
+    final darkTheme = Theme.of(context).copyWith(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xFF0B0B0F),
+      colorScheme: const ColorScheme.dark(
+        primary: AppTheme.primary,
+        secondary: AppTheme.secondary,
+        surface: Color(0xFF18181E),
+        onSurface: Color(0xFFF5F5F7),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
-        children: [
-          _buildIntro(),
-          const SizedBox(height: 18),
-          if (widget.isOwner) _buildPayoutSetup(),
-          if (widget.isOwner) _buildOwnerTiers() else _buildAvailableTiers(),
-          if (!widget.isOwner) ...[
-            const SizedBox(height: 22),
-            _buildMySponsorships(),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF0B0B0F),
+        foregroundColor: Color(0xFFF5F5F7),
+        elevation: 0,
+        iconTheme: IconThemeData(color: Color(0xFFF5F5F7)),
+        titleTextStyle: TextStyle(color: Color(0xFFF5F5F7), fontSize: 18, fontWeight: FontWeight.w700),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        filled: true,
+        fillColor: Color(0xFF222229),
+        labelStyle: TextStyle(color: Color(0xFFD0D0D8)),
+        hintStyle: TextStyle(color: Color(0xFFB7B7C1)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: Color(0xFF494952)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+          borderSide: BorderSide(color: AppTheme.primary, width: 1.5),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: const Color(0xFFF0DCE4)),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFFF5F5F7),
+          side: const BorderSide(color: Color(0xFF666670)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+        ),
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: Color(0xFF19191F),
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: TextStyle(color: Color(0xFFF5F5F7), fontSize: 20, fontWeight: FontWeight.w700),
+        contentTextStyle: TextStyle(color: Color(0xFFD2D2D8)),
+      ),
+    );
+
+    return Theme(
+      data: darkTheme,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0B0B0F),
+        appBar: AppBar(
+          title: Text('Sponsors · ${widget.ownerTitle}', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+          children: [
+            _buildIntro(),
+            const SizedBox(height: 18),
+            if (widget.isOwner) _buildPayoutSetup(),
+            if (widget.isOwner) _buildOwnerTiers() else _buildAvailableTiers(),
+            if (!widget.isOwner) ...[
+              const SizedBox(height: 22),
+              _buildMySponsorships(),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -100,17 +150,18 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           widget.isOwner
               ? 'Create custom sponsor tiers, set the available slots, and review your payout setup.'
               : 'Choose a sponsor tier. Your artwork will appear after payment and admin approval.',
-          style: const TextStyle(color: Colors.white70, height: 1.4),
+              style: const TextStyle(color: Color(0xFFD0D0D8), height: 1.45),
         ),
         if (!widget.isOwner && widget.ownerType == 'STATION') ...[
           const SizedBox(height: 14),
           Row(children: [
-            const Text('Sponsor duration', style: TextStyle(color: Colors.white70)),
+            const Text('Sponsor duration', style: TextStyle(color: Color(0xFFD0D0D8))),
             const Spacer(),
             DropdownButton<int>(
               value: _durationMonths,
               dropdownColor: const Color(0xFF222226),
               style: const TextStyle(color: Colors.white),
+              iconEnabledColor: Colors.white,
               items: List.generate(24, (i) => DropdownMenuItem(
                 value: i + 1,
                 child: Text('${i + 1} month${i == 0 ? '' : 's'}'),
@@ -220,7 +271,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
         ]),
         const SizedBox(height: 8),
         Text('${tier['bannerSize'] ?? 'MEDIUM'} artwork · $filled / $available slots filled${active ? '' : ' · paused'}',
-            style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            style: const TextStyle(color: Color(0xFFC7C7CF), fontSize: 13)),
         const SizedBox(height: 12),
         if (ownerControls)
           Wrap(spacing: 8, children: [
@@ -260,7 +311,11 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
       context: context,
       builder: (context) => StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
         backgroundColor: const Color(0xFF19191D),
-        title: Text(tierId == null ? 'Create sponsor tier' : 'Edit sponsor tier', style: const TextStyle(color: Colors.white)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          tierId == null ? 'Create sponsor tier' : 'Edit sponsor tier',
+          style: const TextStyle(color: Color(0xFFF5F5F7), fontWeight: FontWeight.w700),
+        ),
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
           _input(name, 'Tier name'),
           _input(price, 'Price in USD', keyboard: TextInputType.number),
@@ -268,11 +323,18 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           DropdownButtonFormField<String>(
             value: bannerSize,
             dropdownColor: const Color(0xFF222226),
-            decoration: const InputDecoration(labelText: 'Artwork size'),
+            style: const TextStyle(color: Colors.white),
+            iconEnabledColor: Colors.white,
+            decoration: const InputDecoration(
+              labelText: 'Artwork size',
+              labelStyle: TextStyle(color: Color(0xFFE0E0E6)),
+              floatingLabelStyle: TextStyle(color: Color(0xFFFF7892)),
+              prefixIcon: Icon(LucideIcons.image, size: 18, color: Color(0xFFD0D0D8)),
+            ),
             items: const [
-              DropdownMenuItem(value: 'LARGE', child: Text('Large')),
-              DropdownMenuItem(value: 'MEDIUM', child: Text('Medium')),
-              DropdownMenuItem(value: 'SMALL', child: Text('Small')),
+              DropdownMenuItem(value: 'LARGE', child: Text('Large · 1200 × 400 px')),
+              DropdownMenuItem(value: 'MEDIUM', child: Text('Medium · 800 × 300 px')),
+              DropdownMenuItem(value: 'SMALL', child: Text('Small · 400 × 150 px')),
             ],
             onChanged: (value) => setDialogState(() => bannerSize = value ?? 'MEDIUM'),
           ),
@@ -280,7 +342,14 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             DropdownButtonFormField<String>(
               value: billingPeriod,
               dropdownColor: const Color(0xFF222226),
-              decoration: const InputDecoration(labelText: 'Billing'),
+              style: const TextStyle(color: Colors.white),
+              iconEnabledColor: Colors.white,
+              decoration: const InputDecoration(
+                labelText: 'Billing',
+                labelStyle: TextStyle(color: Color(0xFFE0E0E6)),
+                floatingLabelStyle: TextStyle(color: Color(0xFFFF7892)),
+                prefixIcon: Icon(LucideIcons.repeat, size: 18, color: Color(0xFFD0D0D8)),
+              ),
               items: const [
                 DropdownMenuItem(value: 'ONE_TIME', child: Text('One-time for selected duration')),
                 DropdownMenuItem(value: 'MONTHLY', child: Text('Monthly recurring')),
@@ -289,7 +358,11 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             ),
         ])),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFFE0E0E6)),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
           FilledButton(onPressed: () {
             final amount = double.tryParse(price.text.trim());
             final slots = int.tryParse(quantity.text.trim());
@@ -328,8 +401,14 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
       child: TextField(
         controller: controller,
         keyboardType: keyboard,
-        style: const TextStyle(color: Colors.white),
-        decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(color: Colors.white60)),
+        cursorColor: AppTheme.primary,
+        style: const TextStyle(color: Color(0xFFF5F5F7)),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Color(0xFFE0E0E6)),
+          floatingLabelStyle: const TextStyle(color: Color(0xFFFF7892)),
+          hintStyle: const TextStyle(color: Color(0xFFC0C0C8)),
+        ),
       ),
     );
   }
@@ -348,24 +427,40 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             final artworkStatus = data['artworkStatus'] as String? ?? 'NOT_SUBMITTED';
             return Container(
               margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: const Color(0xFF151518), borderRadius: BorderRadius.circular(12)),
-              child: Row(children: [
-                const Icon(LucideIcons.checkCircle, color: AppTheme.primary),
-                const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${data['sponsorName'] ?? 'Sponsor'} · $status', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  Text('Artwork: $artworkStatus', style: const TextStyle(color: Colors.white60, fontSize: 12)),
-                ])),
-                if (status == 'ACTIVE' && artworkStatus != 'APPROVED')
-                  IconButton(
-                    tooltip: 'Upload artwork',
-                    onPressed: _busyKey == 'art_${doc.id}' ? null : () => _run('art_${doc.id}', () async {
-                      final media = await ImagePicker().pickMedia();
-                      if (media != null) await _service.uploadArtwork(doc.id, media);
-                    }),
-                    icon: const Icon(LucideIcons.image, color: Colors.white70),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF17171D),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(status == 'ACTIVE' ? LucideIcons.checkCircle : LucideIcons.clock3,
+                      color: status == 'ACTIVE' ? const Color(0xFF63D7A6) : const Color(0xFFFFC36B)),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('${data['sponsorName'] ?? 'Sponsor'}',
+                      style: const TextStyle(color: Color(0xFFF5F5F7), fontWeight: FontWeight.w700, fontSize: 15))),
+                  _StatusPill(status: status),
+                ]),
+                const SizedBox(height: 12),
+                Text('Artwork · ${_humanStatus(artworkStatus)}',
+                    style: const TextStyle(color: Color(0xFFC7C7CF), fontSize: 13)),
+                if (status == 'ACTIVE' && artworkStatus != 'APPROVED') ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _busyKey == 'art_${doc.id}' ? null : () => _run('art_${doc.id}', () async {
+                        final media = await ImagePicker().pickMedia();
+                        if (media != null) await _service.uploadArtwork(doc.id, media);
+                      }),
+                      icon: _busyKey == 'art_${doc.id}'
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(LucideIcons.image, size: 16),
+                      label: Text(_busyKey == 'art_${doc.id}' ? 'Uploading…' : 'Upload artwork'),
+                    ),
                   ),
+                ],
               ]),
             );
           }),
@@ -454,7 +549,7 @@ class _SectionHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: Text(text, style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, letterSpacing: 1.2, fontSize: 11)),
+        child: Text(text, style: const TextStyle(color: Color(0xFFD0D0D8), fontWeight: FontWeight.bold, letterSpacing: 1.2, fontSize: 12)),
       );
 }
 
@@ -464,7 +559,7 @@ class _EmptyMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(text, style: const TextStyle(color: Colors.white54)),
+        child: Text(text, style: const TextStyle(color: Color(0xFFC4C4CD))),
       );
 }
 
@@ -575,6 +670,37 @@ class SponsorshipMarketplaceSection extends StatelessWidget {
       ),
     ]);
   }
+}
+
+class _StatusPill extends StatelessWidget {
+  final String status;
+  const _StatusPill({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = status == 'ACTIVE';
+    final color = active ? const Color(0xFF63D7A6) : const Color(0xFFFFC36B);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        _humanStatus(status),
+        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+String _humanStatus(String status) {
+  return status
+      .toLowerCase()
+      .split('_')
+      .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
 }
 
 class PendingSponsorshipArtworkScreen extends StatelessWidget {

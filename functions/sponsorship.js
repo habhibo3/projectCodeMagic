@@ -573,9 +573,12 @@ async function updateTier(uid, body) {
 
 async function submitArtwork(uid, body) {
   const sponsorshipId = id(body.sponsorshipId, "sponsorshipId");
-  const path = id(body.storagePath, "storagePath");
+  const path = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
   const prefix = `sponsor_artwork/${uid}/${sponsorshipId}/`;
-  if (!path.startsWith(prefix)) throw new Error("Artwork must be uploaded to your sponsorship folder");
+  const fileName = path.startsWith(prefix) ? path.slice(prefix.length) : "";
+  if (!/^artwork_[0-9]+\.(jpg|jpeg|png|webp|mp4|webm)$/.test(fileName)) {
+    throw new Error("Invalid storagePath");
+  }
   const file = admin.storage().bucket().file(path);
   const [exists] = await file.exists();
   if (!exists) throw new Error("Artwork upload was not found");

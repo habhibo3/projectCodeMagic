@@ -128,10 +128,32 @@ class SponsorshipService {
     }
     final uploadId = DateTime.now().microsecondsSinceEpoch;
     final path = 'sponsor_artwork/${user.uid}/$sponsorshipId/artwork_$uploadId.$ext';
-    await FirebaseStorage.instance.ref(path).putData(
-          bytes,
-          SettableMetadata(contentType: contentType),
+    try {
+      await FirebaseStorage.instance.ref(path).putData(
+            bytes,
+            SettableMetadata(contentType: contentType),
+          );
+    } on FirebaseException catch (error) {
+      final code = error.code.toLowerCase();
+      if (code == 'unauthorized' || code == 'unauthenticated') {
+        throw Exception(
+          'Firebase Storage denied this upload. Check that the deployed Storage rules allow signed-in users to write to sponsor_artwork/{their user ID}/{their sponsorship ID}/.',
         );
+      }
+      if (code == 'bucket-not-found' || code == 'no-default-bucket') {
+        throw Exception(
+          'The Firebase Storage bucket is unavailable for this app environment. Confirm the staging app and staging Functions use the mlivecast-staging bucket.',
+        );
+      }
+      if (code == 'too-many-requests' || code == 'retry-limit-exceeded' || code == 'quota-exceeded') {
+        throw Exception(
+          'Firebase Storage temporarily rejected the upload (${error.code}). Wait a minute and try once more. If it continues, check Storage quotas and the upload request in the browser Network panel.',
+        );
+      }
+      throw Exception(
+        'Firebase Storage upload failed (${error.code})${error.message == null ? '.' : ': ${error.message}'}.',
+      );
+    }
     await call('submit_artwork', {
       'sponsorshipId': sponsorshipId,
       'storagePath': path,
