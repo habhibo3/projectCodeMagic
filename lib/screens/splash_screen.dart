@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:firebase_core/firebase_core.dart';
 import '../theme/app_theme.dart';
 import '../main.dart';
-import '../firebase_options.dart';
-import '../data/firebase_seeder.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -24,15 +21,6 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _initializeApp() async {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      await FirebaseSeeder.seedIfEmpty();
-    } catch (e) {
-      // Silently handle Firebase initialization errors
-    }
-
     if (mounted) {
       setState(() {
         _isInitialized = true;

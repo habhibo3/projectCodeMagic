@@ -42,7 +42,7 @@ void main() async {
 
   String? initError;
   try {
-    FirebaseOptions firebaseOptions;
+    final FirebaseOptions firebaseOptions;
     switch (currentEnv) {
       case Env.staging:
         firebaseOptions = staging.DefaultFirebaseOptions.currentPlatform;
@@ -51,21 +51,36 @@ void main() async {
         firebaseOptions = prod.DefaultFirebaseOptions.currentPlatform;
         break;
     }
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: firebaseOptions,
+
+    FirebaseApp? defaultApp;
+    for (final app in Firebase.apps) {
+      if (app.name == '[DEFAULT]') {
+        defaultApp = app;
+        break;
+      }
+    }
+
+    if (defaultApp != null &&
+        defaultApp.options.projectId != firebaseOptions.projectId) {
+      await defaultApp.delete();
+      defaultApp = null;
+    }
+
+    if (defaultApp == null) {
+      await Firebase.initializeApp(options: firebaseOptions);
+    }
+
+    final actualProjectId = Firebase.app().options.projectId;
+    if (actualProjectId != firebaseOptions.projectId) {
+      throw StateError(
+        'Expected Firebase project ${firebaseOptions.projectId}, '
+        'but initialized $actualProjectId.',
       );
     }
+    debugPrint('Firebase initialized for project: $actualProjectId');
   } catch (e, stack) {
-    debugPrint('Firebase custom options init failed: $e\n$stack');
-    try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
-      }
-    } catch (fallbackError) {
-      debugPrint('Firebase fallback default init failed: $fallbackError');
-      initError = 'Firebase initialization error: $e';
-    }
+    debugPrint('Firebase environment initialization failed: $e\n$stack');
+    initError = 'Firebase initialization error: $e';
   }
 
   runApp(MlivecastApp(initializationError: initError));
