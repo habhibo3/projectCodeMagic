@@ -12,6 +12,7 @@ const auth = admin.auth();
 // account-cleanup triggers so the current app session flow remains untouched.
 const livekitUsage = require("./livekit_usage");
 const sponsorship = require("./sponsorship");
+const appleIap = require("./apple_iap");
 
 exports.issueLiveKitToken = livekitUsage.issueLiveKitToken;
 exports.livekitWebhook = livekitUsage.livekitWebhook;
@@ -21,6 +22,9 @@ exports.stripeSponsorshipWebhook = sponsorship.stripeSponsorshipWebhook;
 exports.expireSponsorships = sponsorship.expireSponsorships;
 exports.onContestSponsorshipEndDateChanged =
   sponsorship.onContestSponsorshipEndDateChanged;
+exports.verifyAppleSubscription = appleIap.verifyAppleSubscription;
+exports.appleSubscriptionNotifications =
+  appleIap.appleSubscriptionNotifications;
 
 /**
  * Helper function to completely purge all user data from Firestore collections.

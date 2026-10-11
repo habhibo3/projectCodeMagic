@@ -8,6 +8,7 @@ import '../engine/ranking_engine.dart';
 import '../models/post.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_helper.dart';
+import 'subscription_upgrade_screen.dart';
 
 class EditPostScreen extends StatefulWidget {
   final PostModel post;
@@ -96,6 +97,13 @@ class _EditPostScreenState extends State<EditPostScreen> {
             ),
             onPressed: () {
               Navigator.pop(dialogCtx);
+              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SubscriptionUpgradeScreen()),
+                );
+                return;
+              }
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Please go to the Profile tab to toggle Premium subscription instantly!'),

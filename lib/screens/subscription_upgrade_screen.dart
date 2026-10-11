@@ -1,10 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../data/apple_subscription_service.dart';
 import '../data/subscription_service.dart';
 import '../data/payment_service.dart';
 import '../models/subscription.dart';
 import '../theme/app_theme.dart';
+import '../widgets/community_safety_dialog.dart';
+
+const String _privacyPolicyUrl =
+    String.fromEnvironment('MLIVECAST_PRIVACY_POLICY_URL');
 
 class SubscriptionUpgradeScreen extends StatefulWidget {
   const SubscriptionUpgradeScreen({super.key});
@@ -16,20 +26,164 @@ class SubscriptionUpgradeScreen extends StatefulWidget {
 class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   final SubscriptionService _subscriptionService = SubscriptionService();
   final PaymentService _paymentService = PaymentService();
+  final InAppPurchase _store = InAppPurchase.instance;
+  final AppleSubscriptionService _appleSubscriptions = AppleSubscriptionService();
+  StreamSubscription<List<PurchaseDetails>>? _purchaseUpdates;
   
   List<SubscriptionPlan> _plans = [];
   UserSubscription? _currentSubscription;
   bool _isLoading = true;
   bool _isProcessing = false;
+  bool _storeAvailable = false;
+  String? _storeError;
+  Map<String, ProductDetails> _storeProducts = {};
+
+  bool get _usesAppleIap =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
   void initState() {
     super.initState();
+    if (_usesAppleIap) {
+      // Subscribe before querying products so unfinished/restored transactions
+      // are handled even when StoreKit emits them during screen initialization.
+      _purchaseUpdates = _store.purchaseStream.listen(
+        _onPurchaseUpdates,
+        onError: (Object error) {
+          if (mounted) setState(() => _storeError = 'The App Store purchase service is unavailable.');
+        },
+      );
+      _loadAppleProducts();
+    }
     _loadData();
   }
 
+  @override
+  void dispose() {
+    _purchaseUpdates?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadAppleProducts() async {
+    try {
+      final available = await _store.isAvailable();
+      if (!available) {
+        if (mounted) setState(() => _storeError = 'The App Store is not available right now.');
+        return;
+      }
+      final response = await _store.queryProductDetails(
+        AppleSubscriptionService.productToPlan.keys.toSet(),
+      );
+      if (mounted) {
+        setState(() {
+          _storeAvailable = true;
+          _storeProducts = {for (final product in response.productDetails) product.id: product};
+          _storeError = response.error?.message;
+          if (response.notFoundIDs.isNotEmpty && _storeError == null) {
+            _storeError = 'Subscription products are not available in App Store Connect yet.';
+          }
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _storeError = 'Could not load App Store subscriptions.');
+    }
+  }
+
+  Future<void> _onPurchaseUpdates(List<PurchaseDetails> purchases) async {
+    for (final purchase in purchases) {
+      if (purchase.status == PurchaseStatus.pending) {
+        if (mounted) setState(() => _isProcessing = true);
+        continue;
+      }
+      if (purchase.status == PurchaseStatus.error || purchase.status == PurchaseStatus.canceled) {
+        if (purchase.pendingCompletePurchase) {
+          await _store.completePurchase(purchase);
+        }
+        if (mounted) {
+          setState(() => _isProcessing = false);
+          if (purchase.status == PurchaseStatus.error) {
+            _showMessage(purchase.error?.message ?? 'The App Store purchase could not be completed.');
+          }
+        }
+      } else if (purchase.status == PurchaseStatus.purchased ||
+          purchase.status == PurchaseStatus.restored) {
+        try {
+          if (!AppleSubscriptionService.productToPlan.containsKey(purchase.productID)) {
+            throw StateError('This subscription product is not configured for Mlivecast.');
+          }
+          await _appleSubscriptions.verifyAndActivate(
+            purchase.verificationData.serverVerificationData,
+          );
+          if (purchase.pendingCompletePurchase) {
+            await _store.completePurchase(purchase);
+          }
+          await _loadData();
+          if (mounted) _showMessage('Your App Store subscription is active.');
+        } catch (error) {
+          if (mounted) _showMessage(error.toString().replaceFirst('Bad state: ', ''));
+        } finally {
+          if (mounted) setState(() => _isProcessing = false);
+        }
+      }
+    }
+  }
+
+  Future<void> _buyApplePlan(SubscriptionPlan plan) async {
+    final productIds = AppleSubscriptionService.productToPlan.entries
+        .where((entry) => entry.value == plan.id)
+        .map((entry) => entry.key)
+        .toList();
+    final productId = productIds.isEmpty ? null : productIds.first;
+    final product = productId == null ? null : _storeProducts[productId];
+    if (!_storeAvailable || product == null) {
+      _showMessage(_storeError ?? 'This subscription is not available in the App Store yet.');
+      return;
+    }
+    setState(() => _isProcessing = true);
+    try {
+      await _store.buyNonConsumable(purchaseParam: PurchaseParam(productDetails: product));
+    } catch (error) {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        _showMessage('Could not start the App Store purchase. Please try again.');
+      }
+    }
+  }
+
+  Future<void> _restoreApplePurchases() async {
+    setState(() => _isProcessing = true);
+    try {
+      await _store.restorePurchases();
+      if (mounted) setState(() => _isProcessing = false);
+    } catch (error) {
+      if (mounted) _showMessage('Could not restore purchases. Please try again.');
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _manageAppleSubscriptions() async {
+    final uri = Uri.parse('https://apps.apple.com/account/subscriptions');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      _showMessage('Could not open Apple subscription settings.');
+    }
+  }
+
+  Future<void> _openPrivacyPolicy() async {
+    final uri = Uri.tryParse(_privacyPolicyUrl);
+    if (uri == null || !uri.hasScheme || !await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    )) {
+      if (mounted) _showMessage('Could not open the Privacy Policy.');
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+    if (mounted) setState(() => _isLoading = true);
     
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -43,6 +197,8 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
           _isLoading = false;
         });
       }
+    } else if (mounted) {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -80,6 +236,44 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
                   ),
                   const SizedBox(height: 24),
                   ..._plans.map((plan) => _buildPlanCard(plan)),
+                  if (_usesAppleIap) ...[
+                    if (_storeError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(_storeError!, style: const TextStyle(color: Colors.orangeAccent)),
+                    ],
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 24,
+                        children: [
+                          TextButton(
+                            onPressed: _isProcessing ? null : _restoreApplePurchases,
+                            child: const Text('Restore Purchases'),
+                          ),
+                          TextButton(
+                            onPressed: _manageAppleSubscriptions,
+                            child: const Text('Manage Subscription'),
+                          ),
+                          TextButton(
+                            onPressed: () => CommunitySafetyHelper.showEula(context),
+                            child: const Text('Terms of Use'),
+                          ),
+                          if (_privacyPolicyUrl.isNotEmpty)
+                            TextButton(
+                              onPressed: _openPrivacyPolicy,
+                              child: const Text('Privacy Policy'),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Payment will be charged to your Apple Account at confirmation. Subscriptions renew automatically unless canceled at least 24 hours before the current period ends. Your account will be charged for renewal within 24 hours before the period ends. Manage or cancel in Apple Account settings.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -142,7 +336,7 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
           const SizedBox(height: 8),
           if (_currentSubscription!.endDate != null)
             Text(
-              'Renews on: ${_currentSubscription!.endDate.toString().split('.')[0]}',
+              '${_currentSubscription!.autoRenew ? 'Renews on' : 'Access ends'}: ${_currentSubscription!.endDate.toString().split('.')[0]}',
               style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
             ),
           if (_currentSubscription!.status == 'canceled')
@@ -164,7 +358,8 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   }
 
   Widget _buildPlanCard(SubscriptionPlan plan) {
-    final isCurrentPlan = _currentSubscription?.planId == plan.id;
+    final isCurrentPlan = _currentSubscription?.planId == plan.id ||
+        (_usesAppleIap && _currentSubscription == null && plan.id == 'free');
     final isUpgrade = _currentSubscription != null && 
                       plan.price > _plans.firstWhere((p) => p.id == _currentSubscription!.planId).price;
 
@@ -225,7 +420,11 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '\$${plan.price.toStringAsFixed(2)}',
+                _usesAppleIap
+                    ? (plan.id == 'free'
+                        ? 'Free'
+                        : (_storeProducts[_appleProductIdForPlan(plan.id)]?.price ?? '—'))
+                    : '\$${plan.price.toStringAsFixed(2)}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 36,
@@ -249,7 +448,7 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
             children: plan.features.map((feature) => _buildFeatureChip(feature)).toList(),
           ),
           const SizedBox(height: 24),
-          if (isCurrentPlan)
+          if (isCurrentPlan || (_usesAppleIap && plan.id == 'free'))
             _buildCurrentPlanButton()
           else
             _buildUpgradeButton(plan, isUpgrade),
@@ -303,14 +502,18 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   Widget _buildUpgradeButton(SubscriptionPlan plan, bool isUpgrade) {
     final label = isUpgrade ? 'Upgrade' : 'Switch Plan';
     final color = isUpgrade ? AppTheme.primary : Colors.blue;
+    final appleProductReady = !_usesAppleIap ||
+        (_storeAvailable && _storeProducts.containsKey(_appleProductIdForPlan(plan.id)));
 
     return InkWell(
-      onTap: _isProcessing ? null : () => _showPaymentDialog(plan),
+      onTap: _isProcessing || !appleProductReady
+          ? null
+          : () => _usesAppleIap ? _buyApplePlan(plan) : _showPaymentDialog(plan),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: _isProcessing ? Colors.white.withOpacity(0.1) : color,
+          color: _isProcessing || !appleProductReady ? Colors.white.withOpacity(0.1) : color,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Center(
@@ -324,7 +527,11 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
                   ),
                 )
               : Text(
-                  label,
+                  _usesAppleIap && !appleProductReady
+                      ? (_storeError != null || _storeAvailable
+                          ? 'Not available'
+                          : 'Loading App Store…')
+                      : _usesAppleIap ? 'Subscribe with Apple' : label,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -334,6 +541,13 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
         ),
       ),
     );
+  }
+
+  String? _appleProductIdForPlan(String planId) {
+    for (final entry in AppleSubscriptionService.productToPlan.entries) {
+      if (entry.value == planId) return entry.key;
+    }
+    return null;
   }
 
   void _showPaymentDialog(SubscriptionPlan plan) {

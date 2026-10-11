@@ -1973,6 +1973,7 @@ class _UserProfileTabState extends State<_UserProfileTab> {
           }
 
           final isPremium = user.subscriptionLevel == 'premium';
+          final useAppleIap = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
           // Web-specific layout with max width constraint
           final content = SingleChildScrollView(
@@ -2182,26 +2183,36 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                           ],
                         ),
                       ),
-                      Switch.adaptive(
-                        activeColor: const Color(0xFFD4AF37),
-                        value: isPremium,
-                        onChanged: (val) async {
-                          final newLevel = val ? 'premium' : 'free';
-                          await FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(user.uid)
-                              .update({'subscriptionLevel': newLevel});
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Membership upgraded to [${newLevel.toUpperCase()}]!'),
-                                behavior: SnackBarBehavior.floating,
-                                backgroundColor: val ? Colors.purple : Colors.grey.shade900,
-                              ),
-                            );
-                          }
-                        },
-                      ),
+                      if (useAppleIap)
+                        TextButton.icon(
+                          icon: Icon(isPremium ? LucideIcons.settings : LucideIcons.sparkles),
+                          label: Text(isPremium ? 'Manage' : 'Upgrade'),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SubscriptionUpgradeScreen()),
+                          ),
+                        )
+                      else
+                        Switch.adaptive(
+                          activeColor: const Color(0xFFD4AF37),
+                          value: isPremium,
+                          onChanged: (val) async {
+                            final newLevel = val ? 'premium' : 'free';
+                            await FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(user.uid)
+                                .update({'subscriptionLevel': newLevel});
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Membership upgraded to [${newLevel.toUpperCase()}]!'),
+                                  behavior: SnackBarBehavior.floating,
+                                  backgroundColor: val ? Colors.purple : Colors.grey.shade900,
+                                ),
+                              );
+                            }
+                          },
+                        ),
                     ],
                   ),
                 ),
