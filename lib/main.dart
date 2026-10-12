@@ -53,28 +53,36 @@ void main() async {
     }
 
     FirebaseApp? defaultApp;
-    for (final app in Firebase.apps) {
-      if (app.name == '[DEFAULT]') {
-        defaultApp = app;
-        break;
-      }
-    }
-
-    if (defaultApp != null &&
-        defaultApp.options.projectId != firebaseOptions.projectId) {
-      await defaultApp.delete();
-      defaultApp = null;
+    try {
+      defaultApp = Firebase.app();
+    } on FirebaseException catch (error) {
+      if (error.code != 'no-app') rethrow;
     }
 
     if (defaultApp == null) {
-      await Firebase.initializeApp(options: firebaseOptions);
+      try {
+        defaultApp = await Firebase.initializeApp(options: firebaseOptions);
+      } on FirebaseException catch (error) {
+        if (error.code != 'duplicate-app') rethrow;
+        for (final app in Firebase.apps) {
+          if (app.name == '[DEFAULT]') {
+            defaultApp = app;
+            break;
+          }
+        }
+        if (defaultApp == null) rethrow;
+      }
     }
 
-    final actualProjectId = Firebase.app().options.projectId;
+    if (defaultApp == null) {
+      throw StateError('The default Firebase app could not be initialized.');
+    }
+    final actualProjectId = defaultApp.options.projectId;
     if (actualProjectId != firebaseOptions.projectId) {
       throw StateError(
-        'Expected Firebase project ${firebaseOptions.projectId}, '
-        'but initialized $actualProjectId.',
+        'This build requires Firebase project '
+        '${firebaseOptions.projectId}, but iOS is configured for '
+        '$actualProjectId. Install the matching GoogleService-Info.plist.',
       );
     }
     debugPrint('Firebase initialized for project: $actualProjectId');
