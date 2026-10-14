@@ -15,13 +15,29 @@ workflows:
       - name: Select staging Firebase configuration
         script: cp ios/Runner/GoogleService-Info-Staging.plist ios/Runner/GoogleService-Info.plist
       - name: Build iOS release (Staging)
-        script: flutter build ios --release --no-codesign --dart-define=ENV=staging
+        script: >-
+          flutter build ios --release --no-codesign
+          --build-name=1.0.0 --build-number=34 --dart-define=ENV=staging
       - name: Package into IPA
         script: |
           xcode-project use-profiles
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme Runner || (cat /tmp/xcodebuild_logs/*.log && exit 1)
+          IPA_PATH="$(find build/ios/ipa -maxdepth 1 -name '*.ipa' -print -quit)"
+          if [ -z "$IPA_PATH" ]; then
+            echo "The staging IPA was not created."
+            exit 1
+          fi
+          CHECK_DIR="$(mktemp -d)"
+          unzip -q "$IPA_PATH" -d "$CHECK_DIR"
+          ACTUAL_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c \
+            'Print :CFBundleVersion' \
+            "$CHECK_DIR/Payload/Mlivecast.app/Info.plist")"
+          if [ "$ACTUAL_BUILD_NUMBER" != "34" ]; then
+            echo "Expected build number 34; IPA contains $ACTUAL_BUILD_NUMBER."
+            exit 1
+          fi
       - name: Upload to TestFlight
         script: |
           app-store-connect publish \
