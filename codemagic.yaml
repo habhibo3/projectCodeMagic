@@ -71,7 +71,13 @@ workflows:
           fi
           CHECK_DIR="$(mktemp -d)"
           unzip -q "$IPA_PATH" -d "$CHECK_DIR"
-          APP_PLIST="$CHECK_DIR/Payload/Mlivecast.app/GoogleService-Info.plist"
+          APP_BUNDLE="$(find "$CHECK_DIR/Payload" -maxdepth 2 \
+            -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "The IPA does not contain an iOS app bundle."
+            exit 1
+          fi
+          APP_PLIST="$APP_BUNDLE/GoogleService-Info.plist"
           if [ ! -f "$APP_PLIST" ]; then
             echo "The IPA does not contain GoogleService-Info.plist."
             exit 1
@@ -84,7 +90,7 @@ workflows:
           fi
           ACTUAL_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c \
             'Print :CFBundleVersion' \
-            "$CHECK_DIR/Payload/Mlivecast.app/Info.plist")"
+            "$APP_BUNDLE/Info.plist")"
           if [ "$ACTUAL_BUILD_NUMBER" != "35" ]; then
             echo "Expected build number 35; IPA contains $ACTUAL_BUILD_NUMBER."
             exit 1
