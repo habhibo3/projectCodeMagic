@@ -101,6 +101,55 @@ class SponsorshipService {
     return result['checkoutUrl'] as String;
   }
 
+  Future<List<Map<String, dynamic>>> getAppleSponsorshipProducts() async {
+    final result = await call('get_apple_sponsorship_products');
+    return (result['products'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
+
+  Future<void> startAppleSponsorship({
+    required String tierId,
+    required String productId,
+    required int durationMonths,
+  }) async {
+    await call('start_apple_sponsorship', {
+      'tierId': tierId,
+      'productId': productId,
+      'durationMonths': durationMonths,
+    });
+  }
+
+  Future<void> cancelPendingAppleSponsorship(String productId) async {
+    await call('cancel_apple_sponsorship', {'productId': productId});
+  }
+
+  Future<void> verifyAppleSponsorship(String signedTransaction) async {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('Sign in to verify this purchase.');
+    final token = await user.getIdToken();
+    if (token == null || token.isEmpty) {
+      throw Exception('Could not authenticate this purchase.');
+    }
+    final projectId = Firebase.app().options.projectId;
+    final response = await http.post(
+      Uri.parse(
+        'https://us-central1-$projectId.cloudfunctions.net/verifyAppleSponsorship',
+      ),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'signedTransaction': signedTransaction}),
+    );
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        body['error'] as String? ?? 'Could not verify this Apple purchase.',
+      );
+    }
+  }
+
   Future<String> startPayoutSetup() async {
     final result = await call('connect_onboarding');
     return result['url'] as String;

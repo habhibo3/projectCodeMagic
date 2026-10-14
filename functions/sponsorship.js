@@ -13,6 +13,11 @@ const LEDGER = "usage_ledger";
 const EVENTS = "stripe_webhook_events";
 const STRIPE_API = "https://api.stripe.com/v1";
 
+function appleLockId(uid, productId) {
+  return crypto.createHash("sha256")
+      .update(`${uid}:${productId}`).digest("hex");
+}
+
 function stripeSecret() {
   return process.env.STRIPE_SECRET_KEY || "";
 }
@@ -234,6 +239,273 @@ async function createCheckout(uid, body) {
   }
 }
 
+async function getAppleSponsorshipProducts() {
+  const snapshot = await db.collection("apple_sponsorship_products")
+      .where("active", "==", true).get();
+  return {products: snapshot.docs.map((doc) => ({
+    productId: doc.id,
+    priceCents: doc.get("priceCents"),
+    durationMonths: doc.get("durationMonths") || null,
+    ownerTypes: doc.get("ownerTypes") || [],
+  }))};
+}
+
+async function startAppleSponsorship(uid, body) {
+  const tierId = id(body.tierId, "tierId");
+  const productId = id(body.productId, "productId");
+  const tierRef = db.collection(TIERS).doc(tierId);
+  const tierSnap = await tierRef.get();
+  if (!tierSnap.exists || tierSnap.get("active") !== true) {
+    throw new Error("This sponsor tier is not available");
+  }
+  const tier = tierSnap.data();
+  const productRef = db.collection("apple_sponsorship_products").doc(productId);
+  const productSnap = await productRef.get();
+  if (!productSnap.exists || productSnap.get("active") !== true) {
+    throw new Error("This App Store sponsorship option is unavailable");
+  }
+  const product = productSnap.data();
+  const ownerTypes = Array.isArray(product.ownerTypes) ? product.ownerTypes : [];
+  const durationMonths = tier.ownerType === "STATION" ?
+    Math.max(1, Math.min(24, Number(body.durationMonths) || 1)) : null;
+  const expectedPrice = tier.billingPeriod === "MONTHLY" ?
+    Number(tier.price) * (durationMonths || 1) : Number(tier.price);
+  if (!ownerTypes.includes(tier.ownerType) ||
+      Number(product.priceCents) !== expectedPrice) {
+    throw new Error("This tier does not match an available App Store price");
+  }
+  if (tier.ownerType === "STATION" &&
+      Number(product.durationMonths) !== durationMonths) {
+    throw new Error("This App Store option does not match the selected duration");
+  }
+  const pending = await db.collection(SPONSORSHIPS)
+      .where("sponsorUserId", "==", uid).get();
+  for (const doc of pending.docs.filter((item) =>
+    item.get("appleProductId") === productId &&
+    item.get("status") === "PENDING_PAYMENT")) {
+    const createdAt = doc.get("createdAt");
+    if (createdAt && Date.now() - createdAt.toMillis() < 60 * 60 * 1000) {
+      throw new Error("Finish or cancel your pending App Store purchase first");
+    }
+    await releaseReservation(doc.id, "PAYMENT_EXPIRED");
+  }
+
+  const owner = await getOwner(tier.ownerType, tier.ownerId);
+  const sponsorUser = await db.collection("users").doc(uid).get();
+  const sponsorName = sponsorUser.get("displayName") ||
+    sponsorUser.get("name") || "Mlivecast sponsor";
+  const contestEndsAt = tier.ownerType === "CONTEST" ?
+    dateFromContest(owner.snapshot) : null;
+  if (contestEndsAt && contestEndsAt.toMillis() <= Date.now()) {
+    throw new Error("This contest has ended and cannot accept sponsorships");
+  }
+  const durationEndsAt = durationMonths ?
+    admin.firestore.Timestamp.fromDate(
+        addCalendarMonths(new Date(), durationMonths)) : null;
+  const sponsorshipRef = db.collection(SPONSORSHIPS).doc();
+  await db.runTransaction(async (transaction) => {
+    const currentTier = await transaction.get(tierRef);
+    const lockRef = db.collection("apple_sponsorship_pending")
+        .doc(appleLockId(uid, productId));
+    const lock = await transaction.get(lockRef);
+    if (lock.exists) {
+      throw new Error("Finish or cancel your pending App Store purchase first");
+    }
+    if (!currentTier.exists || currentTier.get("active") !== true) {
+      throw new Error("This sponsor tier is not available");
+    }
+    const filled = currentTier.get("quantityFilled") || 0;
+    const available = currentTier.get("quantityAvailable") || 0;
+    if (filled >= available) throw new Error("This sponsor tier is sold out");
+    transaction.update(tierRef, {
+      quantityFilled: filled + 1,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    transaction.create(sponsorshipRef, {
+      tierId,
+      ownerType: tier.ownerType,
+      ownerId: tier.ownerId,
+      ownerUserId: owner.creatorId,
+      ownerTitle: owner.title,
+      sponsorUserId: uid,
+      sponsorName,
+      bannerSize: tier.bannerSize || "MEDIUM",
+      artworkUrl: null,
+      artworkPath: null,
+      artworkStatus: "NOT_SUBMITTED",
+      startedAt: null,
+      endsAt: contestEndsAt || durationEndsAt,
+      durationMonths,
+      status: "PENDING_PAYMENT",
+      billingPeriod: "ONE_TIME",
+      paymentProvider: "apple",
+      appleProductId: productId,
+      amountPaid: 0,
+      currency: "usd",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    transaction.create(lockRef, {
+      userId: uid,
+      productId,
+      sponsorshipId: sponsorshipRef.id,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  return {sponsorshipId: sponsorshipRef.id};
+}
+
+async function cancelAppleSponsorship(uid, body) {
+  const productId = id(body.productId, "productId");
+  const pending = await db.collection(SPONSORSHIPS)
+      .where("sponsorUserId", "==", uid).get();
+  for (const doc of pending.docs.filter((item) =>
+    item.get("appleProductId") === productId &&
+    item.get("status") === "PENDING_PAYMENT")) {
+    await releaseReservation(doc.id, "PAYMENT_CANCELLED");
+  }
+  return {success: true};
+}
+
+async function activateAppleSponsorship(uid, transactionInfo) {
+  const productId = id(transactionInfo.productId, "productId");
+  const productRef = db.collection("apple_sponsorship_products").doc(productId);
+  const productSnap = await productRef.get();
+  if (!productSnap.exists) {
+    throw new Error("This App Store sponsorship product is not configured");
+  }
+  const product = productSnap.data();
+  const transactionId = id(transactionInfo.transactionId, "transactionId");
+  const paymentRef = db.collection("sponsorship_payments").doc(
+      crypto.createHash("sha256")
+          .update(`apple:${transactionId}`).digest("hex"));
+  const previousPayment = await paymentRef.get();
+  if (previousPayment.exists) {
+    if (previousPayment.get("sponsorUserId") !== uid) {
+      throw new Error("This App Store transaction is already in use");
+    }
+    return {success: true};
+  }
+  const pending = await db.collection(SPONSORSHIPS)
+      .where("sponsorUserId", "==", uid).get();
+  const matchingPending = pending.docs.filter((item) =>
+    item.get("appleProductId") === productId &&
+    item.get("status") === "PENDING_PAYMENT");
+  if (matchingPending.length !== 1) {
+    throw new Error("Could not match the App Store payment to one pending sponsorship");
+  }
+  const sponsorshipId = matchingPending[0].id;
+  const sponsorshipRef = matchingPending[0].ref;
+  await db.runTransaction(async (transaction) => {
+    const payment = await transaction.get(paymentRef);
+    const sponsorship = await transaction.get(sponsorshipRef);
+    if (payment.exists) {
+      if (payment.get("sponsorUserId") !== uid) {
+        throw new Error("This App Store transaction is already in use");
+      }
+      return;
+    }
+    if (!sponsorship.exists || sponsorship.get("sponsorUserId") !== uid ||
+        sponsorship.get("status") !== "PENDING_PAYMENT" ||
+        sponsorship.get("appleProductId") !== productId) {
+      throw new Error("This App Store sponsorship is no longer payable");
+    }
+    const details = sponsorship.data();
+    const owner = await getOwner(details.ownerType, details.ownerId);
+    const lockRef = db.collection("apple_sponsorship_pending")
+        .doc(appleLockId(uid, productId));
+    const lock = await transaction.get(lockRef);
+    const endsAt = details.ownerType === "CONTEST" ?
+      dateFromContest(owner.snapshot) : details.endsAt;
+    transaction.update(sponsorshipRef, {
+      status: "ACTIVE",
+      startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      endsAt,
+      amountPaid: Number(product.priceCents),
+      appleTransactionId: transactionId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    recordRevenue(transaction, details, sponsorshipId,
+        Number(product.priceCents), `apple_${transactionId}`);
+    transaction.create(paymentRef, {
+      sponsorshipId,
+      sponsorUserId: uid,
+      provider: "apple",
+      appleTransactionId: transactionId,
+      productId,
+      amount: Number(product.priceCents),
+      currency: "USD",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (lock.exists && lock.get("sponsorshipId") === sponsorshipId) {
+      transaction.delete(lockRef);
+    }
+  });
+  return {success: true};
+}
+
+async function refundAppleSponsorship(transactionInfo) {
+  const transactionId = id(transactionInfo.transactionId, "transactionId");
+  const paymentId = crypto.createHash("sha256")
+      .update(`apple:${transactionId}`).digest("hex");
+  const paymentRef = db.collection("sponsorship_payments").doc(paymentId);
+  await db.runTransaction(async (transaction) => {
+    const payment = await transaction.get(paymentRef);
+    if (!payment.exists || payment.get("provider") !== "apple" ||
+        payment.get("refunded") === true) return;
+    const sponsorshipId = payment.get("sponsorshipId");
+    const sponsorshipRef = db.collection(SPONSORSHIPS).doc(sponsorshipId);
+    const sponsorshipSnapshot = await transaction.get(sponsorshipRef);
+    if (!sponsorshipSnapshot.exists) return;
+    const sponsorship = sponsorshipSnapshot.data();
+    const tierRef = db.collection(TIERS).doc(sponsorship.tierId);
+    const tierSnapshot = await transaction.get(tierRef);
+    const shares = ledgerAmount(Number(payment.get("amount") || 0));
+    const ownerLedgerRef = db.collection(LEDGER).doc(
+        ledgerId(sponsorshipId, `apple_refund_${transactionId}`, "owner"));
+    const platformLedgerRef = db.collection(LEDGER).doc(
+        ledgerId(sponsorshipId, `apple_refund_${transactionId}`, "platform"));
+    transaction.update(paymentRef, {
+      refunded: true,
+      refundedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    transaction.update(sponsorshipRef, {
+      status: "REFUNDED",
+      artworkStatus: "REJECTED",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    if (tierSnapshot.exists && sponsorship.status === "ACTIVE") {
+      transaction.update(tierRef, {
+        quantityFilled: Math.max(0,
+            (tierSnapshot.get("quantityFilled") || 0) - 1),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    transaction.create(ownerLedgerRef, {
+      userId: sponsorship.ownerUserId,
+      stationId: sponsorship.ownerType === "STATION" ? sponsorship.ownerId : null,
+      contestId: sponsorship.ownerType === "CONTEST" ? sponsorship.ownerId : null,
+      sponsorshipId,
+      transactionType: "SPONSORSHIP_REFUND",
+      amount: -shares.owner,
+      unit: "USD_CENTS",
+      referenceId: transactionId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    transaction.create(platformLedgerRef, {
+      userId: PLATFORM_ACCOUNT,
+      stationId: sponsorship.ownerType === "STATION" ? sponsorship.ownerId : null,
+      contestId: sponsorship.ownerType === "CONTEST" ? sponsorship.ownerId : null,
+      sponsorshipId,
+      transactionType: "SPONSORSHIP_REFUND",
+      amount: -shares.platform,
+      unit: "USD_CENTS",
+      referenceId: transactionId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+}
+
 async function releaseReservation(sponsorshipId, finalStatus) {
   const sponsorshipRef = db.collection(SPONSORSHIPS).doc(sponsorshipId);
   await db.runTransaction(async (transaction) => {
@@ -241,6 +513,11 @@ async function releaseReservation(sponsorshipId, finalStatus) {
     if (!sponsorship.exists || sponsorship.get("status") !== "PENDING_PAYMENT") return;
     const tierRef = db.collection(TIERS).doc(sponsorship.get("tierId"));
     const tier = await transaction.get(tierRef);
+    const lockRef = sponsorship.get("appleProductId") ?
+      db.collection("apple_sponsorship_pending").doc(
+          appleLockId(sponsorship.get("sponsorUserId"),
+              sponsorship.get("appleProductId"))) : null;
+    const lock = lockRef ? await transaction.get(lockRef) : null;
     if (tier.exists) {
       transaction.update(tierRef, {
         quantityFilled: Math.max(0, (tier.get("quantityFilled") || 0) - 1),
@@ -251,6 +528,9 @@ async function releaseReservation(sponsorshipId, finalStatus) {
       status: finalStatus,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    if (lock && lock.exists && lock.get("sponsorshipId") === sponsorshipId) {
+      transaction.delete(lockRef);
+    }
   });
 }
 
@@ -642,6 +922,12 @@ exports.sponsorshipApi = functions
           case "create_tier": result = await createTier(user.uid, body); break;
           case "update_tier": result = await updateTier(user.uid, body); break;
           case "create_checkout": result = await createCheckout(user.uid, body); break;
+          case "get_apple_sponsorship_products":
+            result = await getAppleSponsorshipProducts(); break;
+          case "start_apple_sponsorship":
+            result = await startAppleSponsorship(user.uid, body); break;
+          case "cancel_apple_sponsorship":
+            result = await cancelAppleSponsorship(user.uid, body); break;
           case "connect_onboarding": result = await createConnectLink(user.uid); break;
           case "submit_artwork": result = await submitArtwork(user.uid, body); break;
           case "approve_artwork": result = await moderateArtwork(user.uid, body, true); break;
@@ -655,6 +941,9 @@ exports.sponsorshipApi = functions
         return res.status(denied ? 403 : 400).json({error: error.message});
       }
     });
+
+exports.activateAppleSponsorship = activateAppleSponsorship;
+exports.refundAppleSponsorship = refundAppleSponsorship;
 
 exports.stripeSponsorshipWebhook = functions
     .region(REGION)

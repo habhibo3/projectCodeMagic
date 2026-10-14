@@ -94,6 +94,18 @@ The server verifies Apple's JWS data using Apple's public root certificate. This
 - In App Review notes, give the reviewer a working account and explain where to open the subscription screen; state that Apple purchase-sheet confirmation is required and provide steps if the reviewer needs a sandbox account.
 - Apple review outcome is not guaranteed by code. The account owner must submit the products and build, complete business agreements, and verify that all paid digital features use the correct payment method.
 
-## Scope limitation: sponsorships
+## Sponsorship purchases
 
-This change covers the rejected **Premium subscription** purchase. Mlivecast sponsorships still create user-priced tiers and use Stripe Connect. Apple explicitly includes advertisements displayed in the same app in its IAP policy examples; the owner must decide whether iOS sponsorship purchases will use a catalog of fixed Apple price points or be disabled on iOS. Do not claim the iOS app is fully policy-cleared while Stripe sponsorship checkout remains available in the iOS build. The Stripe sponsorship flow remains unchanged on web and Android.
+The iOS sponsorship flow uses fixed App Store products for supported
+non-U.S. storefronts. The six staging products, exact Product IDs, Firestore
+catalog fields, and staging seed steps are in
+[`APPLE_SPONSORSHIP_CATALOG.md`](APPLE_SPONSORSHIP_CATALOG.md). The U.S.
+storefront continues to use the configured Stripe route; web and Android
+continue using their existing Stripe flow. This routing and the app behavior
+must be checked against the current Apple rules and reviewed before release.
+
+Do not submit until the product catalog has been configured in staging, the
+staging Functions have been deployed, the matching iOS TestFlight build has
+passed sandbox purchases for all six products, and the required App Review
+screenshots have been captured from the real app. Keep production setup for a
+separate step after staging passes.

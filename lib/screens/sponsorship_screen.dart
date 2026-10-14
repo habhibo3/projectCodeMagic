@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,12 +33,219 @@ class SponsorshipScreen extends StatefulWidget {
 
 class _SponsorshipScreenState extends State<SponsorshipScreen> {
   final SponsorshipService _service = SponsorshipService.instance;
+  final InAppPurchase _store = InAppPurchase.instance;
+  StreamSubscription<List<PurchaseDetails>>? _purchaseUpdates;
+  final Map<String, Map<String, dynamic>> _appleCatalog = {};
+  final Map<String, ProductDetails> _appleProducts = {};
   int _durationMonths = 1;
   String? _busyKey;
+  bool? _isUsStorefront;
+  bool _applePurchasePending = false;
+  String? _applePurchaseError;
+
+  bool get _isIos => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   void _message(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isIos) {
+      _purchaseUpdates = _store.purchaseStream.listen(
+        _handleApplePurchases,
+        onError: (Object error) {
+          if (mounted) {
+            setState(() => _applePurchaseError =
+                'Apple purchases are unavailable right now.');
+          }
+        },
+      );
+      _loadAppleSponsorshipProducts();
+    }
+  }
+
+  @override
+  void dispose() {
+    _purchaseUpdates?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadAppleSponsorshipProducts() async {
+    try {
+      final country = await _store.countryCode();
+      if (mounted) setState(() => _isUsStorefront = country == 'USA');
+      if (country == 'USA') return;
+      if (!await _store.isAvailable()) {
+        throw StateError('The App Store is not available right now.');
+      }
+      final configured = await _service.getAppleSponsorshipProducts();
+      final catalog = <String, Map<String, dynamic>>{
+        for (final item in configured)
+          if (item['productId'] is String) item['productId'] as String: item,
+      };
+      if (catalog.isEmpty) {
+        if (mounted) {
+          setState(() => _applePurchaseError =
+              'Apple sponsorship prices are not configured yet.');
+        }
+        return;
+      }
+      final response = await _store.queryProductDetails(catalog.keys.toSet());
+      if (!mounted) return;
+      setState(() {
+        _appleCatalog
+          ..clear()
+          ..addAll(catalog);
+        _appleProducts
+          ..clear()
+          ..addEntries(response.productDetails.map((product) =>
+              MapEntry(product.id, product)));
+        _applePurchaseError = response.notFoundIDs.isNotEmpty
+            ? 'Some Apple sponsorship products are not ready in App Store Connect.'
+            : response.error?.message;
+        final availableDurations = catalog.values
+            .map((item) => (item['durationMonths'] as num?)?.toInt())
+            .whereType<int>()
+            .toSet();
+        if (availableDurations.isNotEmpty &&
+            !availableDurations.contains(_durationMonths)) {
+          _durationMonths = availableDurations.first;
+        }
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _applePurchaseError =
+            error.toString().replaceFirst('Bad state: ', ''));
+      }
+    }
+  }
+
+  Future<void> _handleApplePurchases(List<PurchaseDetails> purchases) async {
+    for (final purchase in purchases) {
+      if (!_appleCatalog.containsKey(purchase.productID)) continue;
+      if (purchase.status == PurchaseStatus.pending) {
+        if (mounted) setState(() => _applePurchasePending = true);
+        continue;
+      }
+      if (purchase.status == PurchaseStatus.canceled ||
+          purchase.status == PurchaseStatus.error) {
+        await _service.cancelPendingAppleSponsorship(purchase.productID);
+        if (purchase.pendingCompletePurchase) {
+          await _store.completePurchase(purchase);
+        }
+        if (mounted) {
+          setState(() => _applePurchasePending = false);
+          if (purchase.status == PurchaseStatus.error) {
+            _message(purchase.error?.message ??
+                'The App Store could not complete this purchase.');
+          }
+        }
+        continue;
+      }
+      if (purchase.status != PurchaseStatus.purchased &&
+          purchase.status != PurchaseStatus.restored) continue;
+      try {
+        await _service.verifyAppleSponsorship(
+            purchase.verificationData.serverVerificationData);
+        if (purchase.pendingCompletePurchase) {
+          await _store.completePurchase(purchase);
+        }
+        if (mounted && purchase.status == PurchaseStatus.purchased) {
+          _message('Sponsorship payment confirmed.');
+        }
+      } catch (error) {
+        if (mounted) {
+          _message(error.toString().replaceFirst('Exception: ', ''));
+        }
+      } finally {
+        if (mounted) setState(() => _applePurchasePending = false);
+      }
+    }
+  }
+
+  MapEntry<String, ProductDetails>? _appleProductForTier(
+      Map<String, dynamic> tier) {
+    final ownerType = tier['ownerType'] ?? widget.ownerType;
+    final tierPrice = (tier['price'] as num? ?? 0).toInt();
+    final monthly = tier['billingPeriod'] == 'MONTHLY';
+    final months = ownerType == 'STATION' ? _durationMonths : null;
+    for (final entry in _appleCatalog.entries) {
+      final config = entry.value;
+      final allowedOwners = (config['ownerTypes'] as List<dynamic>? ?? [])
+          .map((value) => value.toString()).toSet();
+      final configuredPrice = (config['priceCents'] as num? ?? 0).toInt();
+      final expectedPrice = monthly ? tierPrice * (months ?? 1) : tierPrice;
+      final configuredMonths = (config['durationMonths'] as num?)?.toInt();
+      if (!allowedOwners.contains(ownerType) ||
+          configuredPrice != expectedPrice ||
+          (ownerType == 'STATION' && configuredMonths != months) ||
+          !_appleProducts.containsKey(entry.key)) {
+        continue;
+      }
+      return MapEntry(entry.key, _appleProducts[entry.key]!);
+    }
+    return null;
+  }
+
+  List<DropdownMenuItem<int>> _appleDurationOptions() {
+    final durations = _appleCatalog.values
+        .map((item) => (item['durationMonths'] as num?)?.toInt())
+        .whereType<int>()
+        .toSet()
+        .toList()
+      ..sort();
+    if (durations.isEmpty) durations.addAll(List.generate(24, (i) => i + 1));
+    return durations
+        .map((months) => DropdownMenuItem(
+              value: months,
+              child: Text('$months month${months == 1 ? '' : 's'}'),
+            ))
+        .toList();
+  }
+
+  bool _hasAppleOptionForAnyTerm(Map<String, dynamic> tier) {
+    final ownerType = tier['ownerType'] ?? widget.ownerType;
+    final tierPrice = (tier['price'] as num? ?? 0).toInt();
+    final monthly = tier['billingPeriod'] == 'MONTHLY';
+    return _appleCatalog.entries.any((entry) {
+      final config = entry.value;
+      final owners = (config['ownerTypes'] as List<dynamic>? ?? [])
+          .map((value) => value.toString());
+      final configuredPrice = (config['priceCents'] as num? ?? 0).toInt();
+      final duration = (config['durationMonths'] as num?)?.toInt();
+      if (!owners.contains(ownerType) || !_appleProducts.containsKey(entry.key)) {
+        return false;
+      }
+      if (ownerType == 'CONTEST') return configuredPrice == tierPrice;
+      if (!monthly) return configuredPrice == tierPrice && duration != null;
+      return duration != null &&
+          configuredPrice == tierPrice * duration;
+    });
+  }
+
+  Future<void> _buyAppleTier(String tierId, Map<String, dynamic> tier) async {
+    final matched = _appleProductForTier(tier);
+    if (matched == null) {
+      throw Exception(_applePurchaseError ??
+          'This tier and duration do not have an Apple price option.');
+    }
+    await _service.startAppleSponsorship(
+      tierId: tierId,
+      productId: matched.key,
+      durationMonths: _durationMonths,
+    );
+    if (mounted) setState(() => _applePurchasePending = true);
+    final started = await _store.buyNonConsumable(
+      purchaseParam: PurchaseParam(productDetails: matched.value),
+    );
+    if (!started) {
+      await _service.cancelPendingAppleSponsorship(matched.key);
+      if (mounted) setState(() => _applePurchasePending = false);
+      throw Exception('The App Store purchase did not start. Try again.');
+    }
   }
 
   Future<void> _run(String key, Future<void> Function() action) async {
@@ -152,6 +363,13 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
               : 'Choose a sponsor tier. Your artwork will appear after payment and admin approval.',
               style: const TextStyle(color: Color(0xFFD0D0D8), height: 1.45),
         ),
+        if (!widget.isOwner && _isIos && _isUsStorefront == false) ...[
+          const SizedBox(height: 8),
+          const Text(
+            'Apple purchases are charged once for the selected term and do not renew automatically.',
+            style: TextStyle(color: Color(0xFFB9B9C3), height: 1.4),
+          ),
+        ],
         if (!widget.isOwner && widget.ownerType == 'STATION') ...[
           const SizedBox(height: 14),
           Row(children: [
@@ -162,10 +380,12 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
               dropdownColor: const Color(0xFF222226),
               style: const TextStyle(color: Colors.white),
               iconEnabledColor: Colors.white,
-              items: List.generate(24, (i) => DropdownMenuItem(
-                value: i + 1,
-                child: Text('${i + 1} month${i == 0 ? '' : 's'}'),
-              )),
+              items: _isIos && _isUsStorefront == false
+                  ? _appleDurationOptions()
+                  : List.generate(24, (i) => DropdownMenuItem(
+                        value: i + 1,
+                        child: Text('${i + 1} month${i == 0 ? '' : 's'}'),
+                      )),
               onChanged: (value) => setState(() => _durationMonths = value ?? 1),
             ),
           ]),
@@ -192,7 +412,9 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
                 color: accountId == null ? Colors.amber : Colors.greenAccent),
             const SizedBox(width: 12),
             Expanded(child: Text(
-              accountId == null ? 'Set up Stripe payouts before accepting sponsors.' : 'Stripe payout account linked. Stripe may still be verifying it.',
+              accountId == null
+                  ? 'Link Stripe to receive web, Android, and U.S. iOS sponsorship payments.'
+                  : 'Stripe payout account linked. Stripe may still be verifying it.',
               style: const TextStyle(color: Colors.white70),
             )),
             TextButton(
@@ -213,12 +435,23 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _service.watchTiers(ownerType: widget.ownerType, ownerId: widget.ownerId),
       builder: (context, snapshot) {
-        final docs = snapshot.data?.docs.where((doc) => doc.data()['active'] == true).toList() ?? [];
+        final docs = snapshot.data?.docs.where((doc) {
+          if (doc.data()['active'] != true) return false;
+          if (_isIos && _isUsStorefront == false) {
+            return _hasAppleOptionForAnyTerm(doc.data());
+          }
+          return true;
+        }).toList() ?? [];
         docs.sort((a, b) => (a.data()['price'] as num? ?? 0).compareTo(b.data()['price'] as num? ?? 0));
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const _SectionHeading('AVAILABLE TIERS'),
+          if (_isIos && _isUsStorefront == false && _applePurchaseError != null)
+            _EmptyMessage(_applePurchaseError!),
           if (snapshot.hasError) const _EmptyMessage('Could not load sponsor tiers.'),
-          if (docs.isEmpty && !snapshot.hasError) const _EmptyMessage('No sponsor tiers are available yet.'),
+          if (docs.isEmpty && !snapshot.hasError)
+            _EmptyMessage(_isIos && _isUsStorefront == false
+                ? 'No sponsor tiers have a matching Apple price option yet.'
+                : 'No sponsor tiers are available yet.'),
           ...docs.map((doc) => _tierCard(doc.id, doc.data(), ownerControls: false)),
         ]);
       },
@@ -254,6 +487,12 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     final soldOut = filled >= available;
     final active = tier['active'] == true;
     final monthly = tier['billingPeriod'] == 'MONTHLY';
+    final appleMatch = _isIos && _isUsStorefront == false
+        ? _appleProductForTier(tier)
+        : null;
+    final priceLabel = _isIos && _isUsStorefront == false
+        ? appleMatch?.value.price ?? 'Apple price unavailable'
+        : '\$${(price / 100).toStringAsFixed(2)}${monthly ? ' / month' : ''}';
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(16),
@@ -266,7 +505,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
         Row(children: [
           Expanded(child: Text(tier['name'] as String? ?? 'Sponsor',
               style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold))),
-          Text('\$${(price / 100).toStringAsFixed(2)}${monthly ? ' / month' : ''}',
+          Text(priceLabel,
               style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
         ]),
         const SizedBox(height: 8),
@@ -288,11 +527,26 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: soldOut || _busyKey != null ? null : () => _run('buy_$tierId', () async {
-                final url = await _service.startCheckout(tierId, _durationMonths);
-                await _openUrl(url);
-              }),
-              child: Text(_busyKey == 'buy_$tierId' ? 'Opening checkout…' : soldOut ? 'Sold out' : 'Become a sponsor'),
+              onPressed: soldOut || _busyKey != null || _applePurchasePending ||
+                      (_isIos && _isUsStorefront == null) ||
+                      (_isIos && _isUsStorefront == false && appleMatch == null)
+                  ? null
+                  : () => _run('buy_$tierId', () async {
+                      if (_isIos && _isUsStorefront == false) {
+                        await _buyAppleTier(tierId, tier);
+                      } else {
+                        final url = await _service.startCheckout(
+                            tierId, _durationMonths);
+                        await _openUrl(url);
+                      }
+                    }),
+              child: Text(_busyKey == 'buy_$tierId'
+                  ? 'Opening checkout…'
+                  : soldOut
+                      ? 'Sold out'
+                      : _isIos && _isUsStorefront == false
+                          ? 'Purchase with Apple'
+                          : 'Become a sponsor'),
             ),
           ),
       ]),

@@ -2,6 +2,7 @@
 
 const functions = require("firebase-functions/v1");
 const admin = require("firebase-admin");
+const sponsorship = require("./sponsorship");
 const {
   Environment,
   SignedDataVerifier,
@@ -114,6 +115,26 @@ async function verifyTransaction(signedTransaction) {
     throw new Error("Incomplete App Store transaction");
   }
   return {environment, verifier, transaction};
+}
+
+/**
+ * Verify and decode a signed App Store transaction for a sponsorship.
+ * @param {string} signedTransaction Signed transaction payload.
+ * @return {Promise<Object>} Verified one-time transaction.
+ */
+async function verifyOneTimeTransaction(signedTransaction) {
+  const environment = getEnvironment(signedTransaction);
+  const verifier = createVerifier(environment);
+  const transaction = await verifier.verifyAndDecodeTransaction(
+      signedTransaction);
+  if (transaction.bundleId !== BUNDLE_ID) {
+    throw new Error("Transaction bundle does not match this app");
+  }
+  if (!transaction.productId || !transaction.transactionId ||
+      !transaction.purchaseDate) {
+    throw new Error("Incomplete App Store transaction");
+  }
+  return transaction;
 }
 
 /**
@@ -271,6 +292,38 @@ exports.verifyAppleSubscription = functions
       }
     });
 
+exports.verifyAppleSponsorship = functions
+    .region("us-central1")
+    .runWith({secrets: [ROOT_CERT_SECRET]})
+    .https.onRequest(async (req, res) => {
+      res.set("Cache-Control", "no-store");
+      if (req.method !== "POST") {
+        return res.status(405).json({error: "POST required"});
+      }
+      try {
+        const authorization = req.get("authorization") || "";
+        const match = authorization.match(/^Bearer\s+(.+)$/i);
+        if (!match) {
+          return res.status(401).json({error: "Sign in is required"});
+        }
+        const decoded = await admin.auth().verifyIdToken(match[1]);
+        const transaction = await verifyOneTimeTransaction(
+            req.body && req.body.signedTransaction);
+        if (transaction.revocationDate) {
+          return res.status(402).json({error: "This purchase was refunded"});
+        }
+        await sponsorship.activateAppleSponsorship(decoded.uid, transaction);
+        return res.status(200).json({ok: true});
+      } catch (error) {
+        console.error("[verifyAppleSponsorship]", error.message);
+        const status = error.code === "auth/argument-error" ||
+          error.code === "auth/id-token-expired" ? 401 : 400;
+        return res.status(status).json({
+          error: error.message || "Sponsorship purchase verification failed",
+        });
+      }
+    });
+
 exports.appleSubscriptionNotifications = functions
     .region("us-central1")
     .runWith({secrets: [ROOT_CERT_SECRET]})
@@ -304,6 +357,22 @@ exports.appleSubscriptionNotifications = functions
         const transaction = await verifier.verifyAndDecodeTransaction(
             data.signedTransactionInfo);
         applePayloadVerified = true;
+        const sponsorProduct = await db.collection("apple_sponsorship_products")
+            .doc(transaction.productId).get();
+        if (sponsorProduct.exists) {
+          if (["REFUND", "REVOKE"].includes(
+              notification.notificationType)) {
+            await sponsorship.refundAppleSponsorship(transaction);
+          }
+          await eventRef.set({
+            status: "PROCESSED",
+            notificationType: notification.notificationType || null,
+            productId: transaction.productId,
+            transactionId: transaction.transactionId || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          return res.status(200).send("Processed sponsorship notification");
+        }
         const ownerSnapshot = await db.collection("apple_subscription_owners")
             .doc(transaction.originalTransactionId).get();
         if (!ownerSnapshot.exists) {

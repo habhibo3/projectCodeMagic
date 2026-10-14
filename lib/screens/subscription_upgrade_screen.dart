@@ -29,6 +29,7 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   final InAppPurchase _store = InAppPurchase.instance;
   final AppleSubscriptionService _appleSubscriptions = AppleSubscriptionService();
   StreamSubscription<List<PurchaseDetails>>? _purchaseUpdates;
+  final Set<String> _purchaseNotificationsShown = {};
   
   List<SubscriptionPlan> _plans = [];
   UserSubscription? _currentSubscription;
@@ -118,9 +119,20 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
             await _store.completePurchase(purchase);
           }
           await _loadData();
-          if (mounted) _showMessage('Your App Store subscription is active.');
+          if (purchase.status == PurchaseStatus.purchased && mounted) {
+            final notificationKey = purchase.purchaseID ??
+                '${purchase.productID}:${purchase.transactionDate ?? ''}';
+            if (_purchaseNotificationsShown.add(notificationKey)) {
+              _showMessage('Your App Store subscription is active.');
+            }
+          }
         } catch (error) {
-          if (mounted) _showMessage(error.toString().replaceFirst('Bad state: ', ''));
+          final isExpiredRestore =
+              purchase.status == PurchaseStatus.restored &&
+              error.toString().contains('no longer active');
+          if (mounted && !isExpiredRestore) {
+            _showMessage(error.toString().replaceFirst('Bad state: ', ''));
+          }
         } finally {
           if (mounted) setState(() => _isProcessing = false);
         }

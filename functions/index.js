@@ -23,6 +23,7 @@ exports.expireSponsorships = sponsorship.expireSponsorships;
 exports.onContestSponsorshipEndDateChanged =
   sponsorship.onContestSponsorshipEndDateChanged;
 exports.verifyAppleSubscription = appleIap.verifyAppleSubscription;
+exports.verifyAppleSponsorship = appleIap.verifyAppleSponsorship;
 exports.appleSubscriptionNotifications =
   appleIap.appleSubscriptionNotifications;
 
