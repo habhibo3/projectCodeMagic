@@ -52,6 +52,23 @@ void main() async {
         break;
     }
 
+    const expectedFirebaseProjectId = String.fromEnvironment(
+      'EXPECTED_FIREBASE_PROJECT_ID',
+    );
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        kReleaseMode &&
+        expectedFirebaseProjectId.isEmpty) {
+      throw StateError('This iOS release is missing its Firebase environment.');
+    }
+    if (expectedFirebaseProjectId.isNotEmpty &&
+        firebaseOptions.projectId != expectedFirebaseProjectId) {
+      throw StateError(
+        'This build expected Firebase project $expectedFirebaseProjectId, '
+        'but its environment selects ${firebaseOptions.projectId}.',
+      );
+    }
+
     FirebaseApp? defaultApp;
     try {
       defaultApp = Firebase.app();

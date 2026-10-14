@@ -30,6 +30,10 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   final AppleSubscriptionService _appleSubscriptions = AppleSubscriptionService();
   StreamSubscription<List<PurchaseDetails>>? _purchaseUpdates;
   final Set<String> _purchaseNotificationsShown = {};
+  final Set<String> _handledPurchaseUpdates = {};
+  final Set<String> _requestedProductIds = {};
+  Timer? _restoreRequestWindow;
+  bool _isRestoringPurchases = false;
   
   List<SubscriptionPlan> _plans = [];
   UserSubscription? _currentSubscription;
@@ -62,6 +66,7 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   @override
   void dispose() {
     _purchaseUpdates?.cancel();
+    _restoreRequestWindow?.cancel();
     super.dispose();
   }
 
@@ -92,22 +97,31 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
 
   Future<void> _onPurchaseUpdates(List<PurchaseDetails> purchases) async {
     for (final purchase in purchases) {
+      final transactionKey = purchase.purchaseID ??
+          '${purchase.productID}:${purchase.transactionDate ?? ''}:'
+              '${purchase.status.name}';
       if (purchase.status == PurchaseStatus.pending) {
         if (mounted) setState(() => _isProcessing = true);
         continue;
       }
       if (purchase.status == PurchaseStatus.error || purchase.status == PurchaseStatus.canceled) {
+        final wasRequested = _requestedProductIds.remove(purchase.productID);
         if (purchase.pendingCompletePurchase) {
           await _store.completePurchase(purchase);
         }
         if (mounted) {
           setState(() => _isProcessing = false);
-          if (purchase.status == PurchaseStatus.error) {
+          if (wasRequested && purchase.status == PurchaseStatus.error) {
             _showMessage(purchase.error?.message ?? 'The App Store purchase could not be completed.');
           }
         }
       } else if (purchase.status == PurchaseStatus.purchased ||
           purchase.status == PurchaseStatus.restored) {
+        final wasRequested = _requestedProductIds.remove(purchase.productID);
+        final isExplicitRestore = purchase.status == PurchaseStatus.restored &&
+            _isRestoringPurchases;
+        if (!wasRequested && !isExplicitRestore) continue;
+        if (!_handledPurchaseUpdates.add(transactionKey)) continue;
         try {
           if (!AppleSubscriptionService.productToPlan.containsKey(purchase.productID)) {
             throw StateError('This subscription product is not configured for Mlivecast.');
@@ -119,9 +133,8 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
             await _store.completePurchase(purchase);
           }
           await _loadData();
-          if (purchase.status == PurchaseStatus.purchased && mounted) {
-            final notificationKey = purchase.purchaseID ??
-                '${purchase.productID}:${purchase.transactionDate ?? ''}';
+          if (wasRequested && purchase.status == PurchaseStatus.purchased && mounted) {
+            final notificationKey = transactionKey;
             if (_purchaseNotificationsShown.add(notificationKey)) {
               _showMessage('Your App Store subscription is active.');
             }
@@ -130,7 +143,7 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
           final isExpiredRestore =
               purchase.status == PurchaseStatus.restored &&
               error.toString().contains('no longer active');
-          if (mounted && !isExpiredRestore) {
+          if (wasRequested && mounted && !isExpiredRestore) {
             _showMessage(error.toString().replaceFirst('Bad state: ', ''));
           }
         } finally {
@@ -147,14 +160,16 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
         .toList();
     final productId = productIds.isEmpty ? null : productIds.first;
     final product = productId == null ? null : _storeProducts[productId];
-    if (!_storeAvailable || product == null) {
+    if (!_storeAvailable || productId == null || product == null) {
       _showMessage(_storeError ?? 'This subscription is not available in the App Store yet.');
       return;
     }
+    _requestedProductIds.add(productId);
     setState(() => _isProcessing = true);
     try {
       await _store.buyNonConsumable(purchaseParam: PurchaseParam(productDetails: product));
     } catch (error) {
+      _requestedProductIds.remove(productId);
       if (mounted) {
         setState(() => _isProcessing = false);
         _showMessage('Could not start the App Store purchase. Please try again.');
@@ -165,9 +180,17 @@ class _SubscriptionUpgradeScreenState extends State<SubscriptionUpgradeScreen> {
   Future<void> _restoreApplePurchases() async {
     setState(() => _isProcessing = true);
     try {
+      // Let an explicit restore retry transactions that failed earlier.
+      _handledPurchaseUpdates.clear();
+      _restoreRequestWindow?.cancel();
+      _isRestoringPurchases = true;
       await _store.restorePurchases();
+      _restoreRequestWindow = Timer(const Duration(seconds: 20), () {
+        _isRestoringPurchases = false;
+      });
       if (mounted) setState(() => _isProcessing = false);
     } catch (error) {
+      _isRestoringPurchases = false;
       if (mounted) _showMessage('Could not restore purchases. Please try again.');
       if (mounted) setState(() => _isProcessing = false);
     }

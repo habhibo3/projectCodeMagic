@@ -13,11 +13,51 @@ workflows:
       - name: Get Flutter dependencies
         script: flutter pub get
       - name: Select staging Firebase configuration
-        script: cp ios/Runner/GoogleService-Info-Staging.plist ios/Runner/GoogleService-Info.plist
+        script: |
+          set -e
+          cp ios/Runner/GoogleService-Info-Staging.plist \
+            ios/Runner/GoogleService-Info.plist
+          PROJECT_ID=$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' \
+            ios/Runner/GoogleService-Info.plist)
+          if [ "$PROJECT_ID" != "mlivecast-staging" ]; then
+            echo "Staging build selected unexpected Firebase project: $PROJECT_ID"
+            exit 1
+          fi
       - name: Build iOS release (Staging)
         script: >-
           flutter build ios --release --no-codesign
-          --build-name=1.0.0 --build-number=34 --dart-define=ENV=staging
+          --build-name=1.0.0 --build-number=35 --dart-define=ENV=staging
+          --dart-define=EXPECTED_FIREBASE_PROJECT_ID=mlivecast-staging
+      - name: Verify staging Dart environment
+        script: |
+          python3 - <<'PY'
+          import base64
+          import pathlib
+          import sys
+
+          config = pathlib.Path('ios/Flutter/Generated.xcconfig').read_text()
+          line = next(
+              (item for item in config.splitlines()
+               if item.startswith('DART_DEFINES=')),
+              None,
+          )
+          if line is None:
+              sys.exit('DART_DEFINES is missing from Generated.xcconfig.')
+
+          encoded_values = line.split('=', 1)[1].strip().strip('"').split(',')
+          defines = {
+              base64.b64decode(value + '=' * (-len(value) % 4)).decode()
+              for value in encoded_values if value
+          }
+          required = {
+              'ENV=staging',
+              'EXPECTED_FIREBASE_PROJECT_ID=mlivecast-staging',
+          }
+          missing = required - defines
+          if missing:
+              sys.exit('Missing staging Dart defines: ' + ', '.join(sorted(missing)))
+          print('Verified staging Dart defines and Firebase project.')
+          PY
       - name: Package into IPA
         script: |
           xcode-project use-profiles
@@ -31,17 +71,28 @@ workflows:
           fi
           CHECK_DIR="$(mktemp -d)"
           unzip -q "$IPA_PATH" -d "$CHECK_DIR"
+          APP_PLIST="$CHECK_DIR/Payload/Mlivecast.app/GoogleService-Info.plist"
+          if [ ! -f "$APP_PLIST" ]; then
+            echo "The IPA does not contain GoogleService-Info.plist."
+            exit 1
+          fi
+          IPA_PROJECT_ID=$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' \
+            "$APP_PLIST")
+          if [ "$IPA_PROJECT_ID" != "mlivecast-staging" ]; then
+            echo "Expected staging Firebase in IPA; found $IPA_PROJECT_ID."
+            exit 1
+          fi
           ACTUAL_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c \
             'Print :CFBundleVersion' \
             "$CHECK_DIR/Payload/Mlivecast.app/Info.plist")"
-          if [ "$ACTUAL_BUILD_NUMBER" != "34" ]; then
-            echo "Expected build number 34; IPA contains $ACTUAL_BUILD_NUMBER."
+          if [ "$ACTUAL_BUILD_NUMBER" != "35" ]; then
+            echo "Expected build number 35; IPA contains $ACTUAL_BUILD_NUMBER."
             exit 1
           fi
       - name: Upload to TestFlight
         script: |
           app-store-connect publish \
-            --path build/ios/ipa/*.ipa
+            --path build/ios/ipa/Mlivecast.ipa
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
@@ -67,7 +118,10 @@ workflows:
       - name: Get Flutter dependencies
         script: flutter pub get
       - name: Build iOS release
-        script: flutter build ios --release --no-codesign --dart-define=ENV=prod
+        script: >-
+          flutter build ios --release --no-codesign
+          --dart-define=ENV=prod
+          --dart-define=EXPECTED_FIREBASE_PROJECT_ID=contest-app-94050
       - name: Package into IPA
         script: |
           xcode-project use-profiles
