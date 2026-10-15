@@ -26,7 +26,7 @@ workflows:
       - name: Build iOS release (Staging)
         script: >-
           flutter build ios --release --no-codesign
-          --build-name=1.0.0 --build-number=35 --dart-define=ENV=staging
+          --build-name=1.0.0 --build-number=36 --dart-define=ENV=staging
           --dart-define=EXPECTED_FIREBASE_PROJECT_ID=mlivecast-staging
       - name: Verify staging Dart environment
         script: |

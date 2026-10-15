@@ -77,7 +77,20 @@ class SponsorshipService {
           body: jsonEncode({'action': action, ...data}),
         )
         .timeout(const Duration(seconds: 30));
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    Map<String, dynamic> body;
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Expected a JSON object.');
+      }
+      body = decoded;
+    } on FormatException {
+      throw Exception(
+        'The sponsorship service returned an invalid response '
+        '(HTTP ${response.statusCode}). Check that sponsorshipApi is deployed '
+        'to the Firebase project used by this app.',
+      );
+    }
     if (response.statusCode != 200) {
       throw Exception(body['error'] as String? ?? 'Sponsorship request failed.');
     }

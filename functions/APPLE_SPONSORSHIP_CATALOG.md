@@ -21,7 +21,23 @@ the Product ID strings.
 
 ## Seed the staging catalog
 
-From the repository's `functions` directory, run:
+The easiest option is to create the six documents in the Firebase Console:
+
+1. Open Firebase Console and select **mlivecast-staging**.
+2. Open **Firestore Database → Data**.
+3. Create a collection named `apple_sponsorship_products`.
+4. Create each document using the **Product ID / Firestore document** value
+   from the table above as its document ID.
+5. Add `appStoreConnectAppleId` as a **number**, `priceCents` as a **number**,
+   `ownerTypes` as an **array of strings**, and `active` as a **boolean** set
+   to `true`. For the three station products, also add `durationMonths` as a
+   **number** set to `1`. Contest products do not need `durationMonths`.
+
+For example, `Diamond_Contest_Sponsor` has `appStoreConnectAppleId: 6822701123`,
+`priceCents: 100000`, `ownerTypes: ["CONTEST"]`, and `active: true`.
+
+If you prefer the seed script, run it from the repository's `functions`
+directory:
 
 ```powershell
 node .\scripts\seed_apple_sponsorship_catalog.js
@@ -33,6 +49,13 @@ to that staging project. It does not deploy functions or write to production.
 
 Before using the products, confirm that the six **Product ID** values in App
 Store Connect exactly match the IDs above (case-sensitive). The numeric Apple
-IDs are not the Product IDs. Then deploy the pending sponsorship functions to
-staging and install a new staging iOS TestFlight build. Test with an Apple
-Sandbox tester before submitting anything for review.
+IDs are not the Product IDs. Deploy the updated backend to staging from the
+repository root:
+
+```powershell
+firebase deploy --only functions:sponsorshipApi,functions:verifyAppleSponsorship --project mlivecast-staging
+```
+
+Then install a new staging iOS TestFlight build and test with an Apple Sandbox
+tester before submitting anything for review. Do not deploy production until
+staging passes.

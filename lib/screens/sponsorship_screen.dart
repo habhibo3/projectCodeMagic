@@ -45,6 +45,8 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   bool get _isIos => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
+  bool get _requiresAppleIap => _isIos && _isUsStorefront != true;
+
   void _message(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -75,9 +77,10 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   Future<void> _loadAppleSponsorshipProducts() async {
     try {
-      final country = await _store.countryCode();
-      if (mounted) setState(() => _isUsStorefront = country == 'USA');
-      if (country == 'USA') return;
+      final country = (await _store.countryCode()).toUpperCase();
+      final isUsStorefront = country == 'USA' || country == 'US';
+      if (mounted) setState(() => _isUsStorefront = isUsStorefront);
+      if (isUsStorefront) return;
       if (!await _store.isAvailable()) {
         throw StateError('The App Store is not available right now.');
       }
@@ -169,26 +172,32 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
   MapEntry<String, ProductDetails>? _appleProductForTier(
       Map<String, dynamic> tier) {
     final ownerType = tier['ownerType'] ?? widget.ownerType;
-    final tierPrice = (tier['price'] as num? ?? 0).toInt();
-    final monthly = tier['billingPeriod'] == 'MONTHLY';
-    final months = ownerType == 'STATION' ? _durationMonths : null;
-    for (final entry in _appleCatalog.entries) {
-      final config = entry.value;
-      final allowedOwners = (config['ownerTypes'] as List<dynamic>? ?? [])
-          .map((value) => value.toString()).toSet();
-      final configuredPrice = (config['priceCents'] as num? ?? 0).toInt();
-      final expectedPrice = monthly ? tierPrice * (months ?? 1) : tierPrice;
-      final configuredMonths = (config['durationMonths'] as num?)?.toInt();
-      if (!allowedOwners.contains(ownerType) ||
-          configuredPrice != expectedPrice ||
-          (ownerType == 'STATION' && configuredMonths != months) ||
-          !_appleProducts.containsKey(entry.key)) {
-        continue;
-      }
-      return MapEntry(entry.key, _appleProducts[entry.key]!);
+    final productId = tier['appleProductId'] as String?;
+    if (productId == null) return null;
+    final config = _appleCatalog[productId];
+    final product = _appleProducts[productId];
+    if (config == null || product == null) return null;
+    final allowedOwners = (config['ownerTypes'] as List<dynamic>? ?? [])
+        .map((value) => value.toString())
+        .toSet();
+    final configuredMonths = (config['durationMonths'] as num?)?.toInt();
+    if (!allowedOwners.contains(ownerType) ||
+        (ownerType == 'STATION' && configuredMonths != _durationMonths)) {
+      return null;
     }
-    return null;
+    return MapEntry(productId, product);
   }
+
+  List<MapEntry<String, Map<String, dynamic>>> _applePlansForOwner() {
+    return _appleCatalog.entries.where((entry) {
+      final owners = (entry.value['ownerTypes'] as List<dynamic>? ?? [])
+          .map((value) => value.toString());
+      return owners.contains(widget.ownerType);
+    }).toList();
+  }
+
+  String _applePlanName(String productId) =>
+      '${productId.replaceAll('_Sponsor', '').replaceAll('_', ' ')} Sponsor';
 
   List<DropdownMenuItem<int>> _appleDurationOptions() {
     final durations = _appleCatalog.values
@@ -207,30 +216,14 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
   }
 
   bool _hasAppleOptionForAnyTerm(Map<String, dynamic> tier) {
-    final ownerType = tier['ownerType'] ?? widget.ownerType;
-    final tierPrice = (tier['price'] as num? ?? 0).toInt();
-    final monthly = tier['billingPeriod'] == 'MONTHLY';
-    return _appleCatalog.entries.any((entry) {
-      final config = entry.value;
-      final owners = (config['ownerTypes'] as List<dynamic>? ?? [])
-          .map((value) => value.toString());
-      final configuredPrice = (config['priceCents'] as num? ?? 0).toInt();
-      final duration = (config['durationMonths'] as num?)?.toInt();
-      if (!owners.contains(ownerType) || !_appleProducts.containsKey(entry.key)) {
-        return false;
-      }
-      if (ownerType == 'CONTEST') return configuredPrice == tierPrice;
-      if (!monthly) return configuredPrice == tierPrice && duration != null;
-      return duration != null &&
-          configuredPrice == tierPrice * duration;
-    });
+    return _appleProductForTier(tier) != null;
   }
 
   Future<void> _buyAppleTier(String tierId, Map<String, dynamic> tier) async {
     final matched = _appleProductForTier(tier);
     if (matched == null) {
       throw Exception(_applePurchaseError ??
-          'This tier and duration do not have an Apple price option.');
+          'This tier does not use an available App Store sponsor plan.');
     }
     await _service.startAppleSponsorship(
       tierId: tierId,
@@ -262,7 +255,8 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   Future<void> _openUrl(String url) async {
     final uri = Uri.tryParse(url);
-    if (uri == null || !await launchUrl(uri, mode: LaunchMode.platformDefault)) {
+    if (uri == null ||
+        !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       throw Exception('Could not open the secure Stripe page.');
     }
   }
@@ -359,11 +353,13 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
         const SizedBox(height: 8),
         Text(
           widget.isOwner
-              ? 'Create custom sponsor tiers, set the available slots, and review your payout setup.'
+              ? _requiresAppleIap
+                  ? 'Choose a fixed App Store sponsor plan and set how many slots are available.'
+                  : 'Create sponsor tiers, set available slots, and review payout setup.'
               : 'Choose a sponsor tier. Your artwork will appear after payment and admin approval.',
               style: const TextStyle(color: Color(0xFFD0D0D8), height: 1.45),
         ),
-        if (!widget.isOwner && _isIos && _isUsStorefront == false) ...[
+        if (!widget.isOwner && _requiresAppleIap) ...[
           const SizedBox(height: 8),
           const Text(
             'Apple purchases are charged once for the selected term and do not renew automatically.',
@@ -380,7 +376,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
               dropdownColor: const Color(0xFF222226),
               style: const TextStyle(color: Colors.white),
               iconEnabledColor: Colors.white,
-              items: _isIos && _isUsStorefront == false
+              items: _requiresAppleIap
                   ? _appleDurationOptions()
                   : List.generate(24, (i) => DropdownMenuItem(
                         value: i + 1,
@@ -395,6 +391,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
   }
 
   Widget _buildPayoutSetup() {
+    if (_requiresAppleIap) return const SizedBox.shrink();
     return FutureBuilder<Map<String, dynamic>?>(
       future: _service.getOwnerConnectAccount(),
       builder: (context, snapshot) {
@@ -437,7 +434,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
       builder: (context, snapshot) {
         final docs = snapshot.data?.docs.where((doc) {
           if (doc.data()['active'] != true) return false;
-          if (_isIos && _isUsStorefront == false) {
+          if (_requiresAppleIap) {
             return _hasAppleOptionForAnyTerm(doc.data());
           }
           return true;
@@ -445,11 +442,11 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
         docs.sort((a, b) => (a.data()['price'] as num? ?? 0).compareTo(b.data()['price'] as num? ?? 0));
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const _SectionHeading('AVAILABLE TIERS'),
-          if (_isIos && _isUsStorefront == false && _applePurchaseError != null)
+          if (_requiresAppleIap && _applePurchaseError != null)
             _EmptyMessage(_applePurchaseError!),
           if (snapshot.hasError) const _EmptyMessage('Could not load sponsor tiers.'),
           if (docs.isEmpty && !snapshot.hasError)
-            _EmptyMessage(_isIos && _isUsStorefront == false
+            _EmptyMessage(_requiresAppleIap
                 ? 'No sponsor tiers have a matching Apple price option yet.'
                 : 'No sponsor tiers are available yet.'),
           ...docs.map((doc) => _tierCard(doc.id, doc.data(), ownerControls: false)),
@@ -467,7 +464,11 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           Row(children: [
             const Expanded(child: _SectionHeading('YOUR TIERS')),
             FilledButton.icon(
-              onPressed: _busyKey == 'new_tier' ? null : () => _showTierEditor(),
+              onPressed: _busyKey == 'new_tier' ||
+                      (_isIos && _isUsStorefront == null) ||
+                      (_requiresAppleIap && _applePlansForOwner().isEmpty)
+                  ? null
+                  : () => _showTierEditor(),
               icon: const Icon(LucideIcons.plus, size: 16),
               label: const Text('Add tier'),
             ),
@@ -487,10 +488,10 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     final soldOut = filled >= available;
     final active = tier['active'] == true;
     final monthly = tier['billingPeriod'] == 'MONTHLY';
-    final appleMatch = _isIos && _isUsStorefront == false
+    final appleMatch = _requiresAppleIap
         ? _appleProductForTier(tier)
         : null;
-    final priceLabel = _isIos && _isUsStorefront == false
+    final priceLabel = _requiresAppleIap && !ownerControls
         ? appleMatch?.value.price ?? 'Apple price unavailable'
         : '\$${(price / 100).toStringAsFixed(2)}${monthly ? ' / month' : ''}';
     return Container(
@@ -529,10 +530,10 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             child: FilledButton(
               onPressed: soldOut || _busyKey != null || _applePurchasePending ||
                       (_isIos && _isUsStorefront == null) ||
-                      (_isIos && _isUsStorefront == false && appleMatch == null)
+                      (_requiresAppleIap && appleMatch == null)
                   ? null
                   : () => _run('buy_$tierId', () async {
-                      if (_isIos && _isUsStorefront == false) {
+                      if (_requiresAppleIap) {
                         await _buyAppleTier(tierId, tier);
                       } else {
                         final url = await _service.startCheckout(
@@ -544,7 +545,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
                   ? 'Opening checkout…'
                   : soldOut
                       ? 'Sold out'
-                      : _isIos && _isUsStorefront == false
+                          : _requiresAppleIap
                           ? 'Purchase with Apple'
                           : 'Become a sponsor'),
             ),
@@ -554,6 +555,10 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
   }
 
   Future<void> _showTierEditor({String? tierId, Map<String, dynamic>? current}) async {
+    final fixedApplePlans = _requiresAppleIap;
+    final applePlans = fixedApplePlans
+        ? _applePlansForOwner()
+        : <MapEntry<String, Map<String, dynamic>>>[];
     final name = TextEditingController(text: current?['name'] as String? ?? '');
     final price = TextEditingController(
       text: current == null ? '' : (((current['price'] as num? ?? 0) / 100).toStringAsFixed(2)),
@@ -561,6 +566,21 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     final quantity = TextEditingController(text: '${current?['quantityAvailable'] ?? 10}');
     var bannerSize = current?['bannerSize'] as String? ?? 'MEDIUM';
     var billingPeriod = current?['billingPeriod'] as String? ?? 'ONE_TIME';
+    var selectedAppleProductId = current?['appleProductId'] as String?;
+    if (fixedApplePlans && tierId == null && applePlans.isNotEmpty) {
+      selectedAppleProductId ??= applePlans.first.key;
+    }
+    void applyApplePlan(String? productId) {
+      selectedAppleProductId = productId;
+      final plan = productId == null ? null : _appleCatalog[productId];
+      if (plan == null) return;
+      name.text = _applePlanName(productId!);
+      price.text = ((plan['priceCents'] as num? ?? 0) / 100).toStringAsFixed(2);
+      billingPeriod = 'ONE_TIME';
+    }
+    if (fixedApplePlans && tierId == null) {
+      applyApplePlan(selectedAppleProductId);
+    }
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
@@ -571,8 +591,40 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           style: const TextStyle(color: Color(0xFFF5F5F7), fontWeight: FontWeight.w700),
         ),
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          _input(name, 'Tier name'),
-          _input(price, 'Price in USD', keyboard: TextInputType.number),
+          if (fixedApplePlans && tierId == null)
+            DropdownButtonFormField<String>(
+              value: selectedAppleProductId,
+              dropdownColor: const Color(0xFF222226),
+              style: const TextStyle(color: Colors.white),
+              iconEnabledColor: Colors.white,
+              decoration: const InputDecoration(
+                labelText: 'App Store sponsor plan',
+                labelStyle: TextStyle(color: Color(0xFFE0E0E6)),
+                prefixIcon: Icon(LucideIcons.heart, size: 18),
+              ),
+              items: applePlans.map((entry) => DropdownMenuItem(
+                value: entry.key,
+                child: Text(
+                  '${_applePlanName(entry.key)} · '
+                  '\$${((entry.value['priceCents'] as num? ?? 0) / 100).toStringAsFixed(2)} USD',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )).toList(),
+              onChanged: (value) => setDialogState(() => applyApplePlan(value)),
+            ),
+          if (fixedApplePlans && tierId != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                current?['appleProductId'] is String
+                    ? 'Fixed App Store plan: ${_applePlanName(current!['appleProductId'] as String)}'
+                    : 'This is a legacy custom tier. It cannot be purchased on non-U.S. iOS. Create a new fixed App Store tier for buyers.',
+                style: const TextStyle(color: Color(0xFFD0D0D8)),
+              ),
+            ),
+          _input(name, 'Tier name', readOnly: fixedApplePlans),
+          _input(price, 'Price in USD', keyboard: TextInputType.number,
+              readOnly: fixedApplePlans),
           _input(quantity, 'Available slots', keyboard: TextInputType.number),
           DropdownButtonFormField<String>(
             value: bannerSize,
@@ -592,7 +644,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             ],
             onChanged: (value) => setDialogState(() => bannerSize = value ?? 'MEDIUM'),
           ),
-          if (widget.ownerType == 'STATION')
+          if (widget.ownerType == 'STATION' && !fixedApplePlans)
             DropdownButtonFormField<String>(
               value: billingPeriod,
               dropdownColor: const Color(0xFF222226),
@@ -617,16 +669,24 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          FilledButton(onPressed: () {
+          FilledButton(onPressed: fixedApplePlans && tierId == null &&
+                  selectedAppleProductId == null
+              ? null
+              : () {
             final amount = double.tryParse(price.text.trim());
             final slots = int.tryParse(quantity.text.trim());
             if (name.text.trim().isEmpty || amount == null || slots == null) return;
             Navigator.pop(context, {
-              'name': name.text.trim(),
-              'price': (amount * 100).round(),
+              if (!fixedApplePlans || tierId == null)
+                'name': name.text.trim(),
+              if (!fixedApplePlans || tierId == null)
+                'price': (amount * 100).round(),
               'quantityAvailable': slots,
               'bannerSize': bannerSize,
-              'billingPeriod': billingPeriod,
+              if (!fixedApplePlans || tierId == null)
+                'billingPeriod': fixedApplePlans ? 'ONE_TIME' : billingPeriod,
+              if (fixedApplePlans && tierId == null)
+                'appleProductId': selectedAppleProductId,
             });
           }, child: const Text('Save')),
         ],
@@ -649,12 +709,14 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     });
   }
 
-  Widget _input(TextEditingController controller, String label, {TextInputType? keyboard}) {
+  Widget _input(TextEditingController controller, String label,
+      {TextInputType? keyboard, bool readOnly = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
         controller: controller,
         keyboardType: keyboard,
+        readOnly: readOnly,
         cursorColor: AppTheme.primary,
         style: const TextStyle(color: Color(0xFFF5F5F7)),
         decoration: InputDecoration(

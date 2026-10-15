@@ -259,6 +259,9 @@ async function startAppleSponsorship(uid, body) {
     throw new Error("This sponsor tier is not available");
   }
   const tier = tierSnap.data();
+  if (tier.appleProductId !== productId) {
+    throw new Error("This tier is not assigned to that App Store sponsor plan");
+  }
   const productRef = db.collection("apple_sponsorship_products").doc(productId);
   const productSnap = await productRef.get();
   if (!productSnap.exists || productSnap.get("active") !== true) {
@@ -785,11 +788,27 @@ async function createTier(uid, body) {
   const ownerType = body.ownerType;
   const ownerId = id(body.ownerId, "ownerId");
   await requireOwner(uid, ownerType, ownerId);
-  const name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "";
-  const price = Number(body.price);
+  let name = typeof body.name === "string" ? body.name.trim().slice(0, 40) : "";
+  let price = Number(body.price);
   const quantityAvailable = Number(body.quantityAvailable);
-  const billingPeriod = body.billingPeriod === "MONTHLY" ? "MONTHLY" : "ONE_TIME";
+  let billingPeriod = body.billingPeriod === "MONTHLY" ? "MONTHLY" : "ONE_TIME";
   const bannerSize = ["LARGE", "MEDIUM", "SMALL"].includes(body.bannerSize) ? body.bannerSize : "MEDIUM";
+  let appleProductId = null;
+  if (body.appleProductId !== undefined) {
+    appleProductId = id(body.appleProductId, "appleProductId");
+    const product = await db.collection("apple_sponsorship_products")
+        .doc(appleProductId).get();
+    const productData = product.data();
+    if (!product.exists || !product.get("active") ||
+        !Array.isArray(productData.ownerTypes) ||
+        !productData.ownerTypes.includes(ownerType)) {
+      throw new Error("Choose an active App Store plan for this sponsor type");
+    }
+    price = Number(product.get("priceCents"));
+    name = appleProductId.replace(/_Sponsor$/, "")
+        .replace(/_/g, " ") + " Sponsor";
+    billingPeriod = "ONE_TIME";
+  }
   if (!name || !Number.isInteger(price) || price < 100 || price > 100000000) throw new Error("Tier needs a name and price of at least 100 cents");
   if (!Number.isInteger(quantityAvailable) || quantityAvailable < 1 || quantityAvailable > 1000) throw new Error("Quantity must be between 1 and 1000");
   if (ownerType === "CONTEST" && billingPeriod === "MONTHLY") throw new Error("Contest sponsorships are one-time payments");
@@ -802,6 +821,7 @@ async function createTier(uid, body) {
     name,
     price,
     billingPeriod,
+    ...(appleProductId ? {appleProductId} : {}),
     quantityAvailable,
     quantityFilled: 0,
     bannerSize,
@@ -819,9 +839,21 @@ async function updateTier(uid, body) {
   if (!snap.exists) throw new Error("Tier not found");
   await requireOwner(uid, snap.get("ownerType"), snap.get("ownerId"));
   const updates = {updatedAt: admin.firestore.FieldValue.serverTimestamp()};
-  if (typeof body.name === "string" && body.name.trim()) updates.name = body.name.trim().slice(0, 40);
-  if (Number.isInteger(Number(body.price)) && Number(body.price) >= 100) updates.price = Number(body.price);
-  if (updates.price > 100000000) throw new Error("Tier price is too high");
+  if (snap.get("appleProductId")) {
+    if (body.price !== undefined || body.name !== undefined ||
+        body.billingPeriod !== undefined || body.appleProductId !== undefined) {
+      throw new Error(
+          "App Store plan name and price cannot change; create a new tier");
+    }
+  } else {
+    if (typeof body.name === "string" && body.name.trim()) {
+      updates.name = body.name.trim().slice(0, 40);
+    }
+    if (Number.isInteger(Number(body.price)) && Number(body.price) >= 100) {
+      updates.price = Number(body.price);
+    }
+    if (updates.price > 100000000) throw new Error("Tier price is too high");
+  }
   if (Number.isInteger(Number(body.quantityAvailable)) && Number(body.quantityAvailable) >= snap.get("quantityFilled")) {
     updates.quantityAvailable = Number(body.quantityAvailable);
   } else if (body.quantityAvailable !== undefined) {
