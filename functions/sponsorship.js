@@ -241,13 +241,15 @@ async function createCheckout(uid, body) {
 
 async function getAppleSponsorshipProducts() {
   const snapshot = await db.collection("apple_sponsorship_products")
-      .where("active", "==", true).get();
-  return {products: snapshot.docs.map((doc) => ({
-    productId: doc.id,
-    priceCents: doc.get("priceCents"),
-    durationMonths: doc.get("durationMonths") || null,
-    ownerTypes: doc.get("ownerTypes") || [],
-  }))};
+      .get();
+  return {products: snapshot.docs
+      .filter((doc) => doc.get("active") !== false)
+      .map((doc) => ({
+        productId: doc.id,
+        priceCents: doc.get("priceCents"),
+        durationMonths: doc.get("durationMonths") || null,
+        ownerTypes: doc.get("ownerTypes") || [],
+      }))};
 }
 
 async function startAppleSponsorship(uid, body) {
@@ -264,7 +266,7 @@ async function startAppleSponsorship(uid, body) {
   }
   const productRef = db.collection("apple_sponsorship_products").doc(productId);
   const productSnap = await productRef.get();
-  if (!productSnap.exists || productSnap.get("active") !== true) {
+  if (!productSnap.exists || productSnap.get("active") === false) {
     throw new Error("This App Store sponsorship option is unavailable");
   }
   const product = productSnap.data();
@@ -799,7 +801,7 @@ async function createTier(uid, body) {
     const product = await db.collection("apple_sponsorship_products")
         .doc(appleProductId).get();
     const productData = product.data();
-    if (!product.exists || !product.get("active") ||
+    if (!product.exists || product.get("active") === false ||
         !Array.isArray(productData.ownerTypes) ||
         !productData.ownerTypes.includes(ownerType)) {
       throw new Error("Choose an active App Store plan for this sponsor type");

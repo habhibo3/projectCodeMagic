@@ -26,7 +26,7 @@ workflows:
       - name: Build iOS release (Staging)
         script: >-
           flutter build ios --release --no-codesign
-          --build-name=1.0.0 --build-number=36 --dart-define=ENV=staging
+          --build-name=1.0.0 --dart-define=ENV=staging
           --dart-define=EXPECTED_FIREBASE_PROJECT_ID=mlivecast-staging
       - name: Verify staging Dart environment
         script: |
@@ -91,8 +91,14 @@ workflows:
           ACTUAL_BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c \
             'Print :CFBundleVersion' \
             "$APP_BUNDLE/Info.plist")"
-          if [ "$ACTUAL_BUILD_NUMBER" != "35" ]; then
-            echo "Expected build number 35; IPA contains $ACTUAL_BUILD_NUMBER."
+          EXPECTED_BUILD_NUMBER="$(sed -nE \
+            's/^version:.*\+([0-9]+)$/\1/p' pubspec.yaml)"
+          if [ -z "$EXPECTED_BUILD_NUMBER" ]; then
+            echo "Could not read the build number from pubspec.yaml."
+            exit 1
+          fi
+          if [ "$ACTUAL_BUILD_NUMBER" != "$EXPECTED_BUILD_NUMBER" ]; then
+            echo "Expected build number $EXPECTED_BUILD_NUMBER; IPA contains $ACTUAL_BUILD_NUMBER."
             exit 1
           fi
       - name: Upload to TestFlight
