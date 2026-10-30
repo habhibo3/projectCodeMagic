@@ -39,13 +39,12 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
   final Map<String, ProductDetails> _appleProducts = {};
   int _durationMonths = 1;
   String? _busyKey;
-  bool? _isUsStorefront;
   bool _applePurchasePending = false;
   String? _applePurchaseError;
 
   bool get _isIos => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
-  bool get _requiresAppleIap => _isIos && _isUsStorefront != true;
+  bool get _requiresAppleIap => _isIos;
 
   void _message(String message) {
     if (!mounted) return;
@@ -77,10 +76,6 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   Future<void> _loadAppleSponsorshipProducts() async {
     try {
-      final country = (await _store.countryCode()).toUpperCase();
-      final isUsStorefront = country == 'USA' || country == 'US';
-      if (mounted) setState(() => _isUsStorefront = isUsStorefront);
-      if (isUsStorefront) return;
       if (!await _store.isAvailable()) {
         throw StateError('The App Store is not available right now.');
       }
@@ -465,8 +460,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             const Expanded(child: _SectionHeading('YOUR TIERS')),
             FilledButton.icon(
               onPressed: _busyKey == 'new_tier' ||
-                      (_isIos && _isUsStorefront == null) ||
-                      (_requiresAppleIap && _applePlansForOwner().isEmpty)
+                                            (_requiresAppleIap && _applePlansForOwner().isEmpty)
                   ? null
                   : () => _showTierEditor(),
               icon: const Icon(LucideIcons.plus, size: 16),
@@ -529,8 +523,7 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
             width: double.infinity,
             child: FilledButton(
               onPressed: soldOut || _busyKey != null || _applePurchasePending ||
-                      (_isIos && _isUsStorefront == null) ||
-                      (_requiresAppleIap && appleMatch == null)
+                                            (_requiresAppleIap && appleMatch == null)
                   ? null
                   : () => _run('buy_$tierId', () async {
                       if (_requiresAppleIap) {
