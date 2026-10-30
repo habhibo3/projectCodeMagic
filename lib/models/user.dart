@@ -13,6 +13,8 @@ class UserModel {
   final DateTime createdAt;
   final int totalVotesCast;
   final String subscriptionLevel; // 'free', 'premium'
+
+  bool get isPremium => subscriptionLevel.toLowerCase().contains('premium');
   final String location; // City/State/Zip string or description
   final String zip;
   final String city;

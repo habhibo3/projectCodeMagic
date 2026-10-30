@@ -46,6 +46,22 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
 
   bool get _requiresAppleIap => _isIos;
 
+  String _cleanPrice(String rawPrice) {
+    return rawPrice.replaceAllMapped(
+      RegExp(r'([,\.])(\d+)(?=[^\d\.,]|$)(.*)'),
+      (match) {
+        final sep = match.group(1)!;
+        final decimals = match.group(2)!;
+        final rest = match.group(3)!;
+        if (RegExp(r'^0+$').hasMatch(decimals)) {
+          return rest;
+        }
+        final stripped = decimals.replaceAll(RegExp(r'0+$'), '');
+        return '$sep$stripped$rest';
+      },
+    );
+  }
+
   void _message(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -148,9 +164,6 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
       try {
         await _service.verifyAppleSponsorship(
             purchase.verificationData.serverVerificationData);
-        if (purchase.pendingCompletePurchase) {
-          await _store.completePurchase(purchase);
-        }
         if (mounted && purchase.status == PurchaseStatus.purchased) {
           _message('Sponsorship payment confirmed.');
         }
@@ -159,6 +172,9 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
           _message(error.toString().replaceFirst('Exception: ', ''));
         }
       } finally {
+        if (purchase.pendingCompletePurchase) {
+          await _store.completePurchase(purchase);
+        }
         if (mounted) setState(() => _applePurchasePending = false);
       }
     }
@@ -485,9 +501,20 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
     final appleMatch = _requiresAppleIap
         ? _appleProductForTier(tier)
         : null;
-    final priceLabel = _requiresAppleIap && !ownerControls
-        ? appleMatch?.value.price ?? 'Apple price unavailable'
+    final matchedAppleProduct = appleMatch ??
+        (tier['appleProductId'] is String && _appleProducts.containsKey(tier['appleProductId'])
+            ? MapEntry(
+                tier['appleProductId'] as String,
+                _appleProducts[tier['appleProductId'] as String]!,
+              )
+            : null);
+    final rawPriceLabel = _requiresAppleIap
+        ? (matchedAppleProduct?.value.price ??
+            (_appleCatalog[tier['appleProductId']] != null
+                ? '\$${(((tier['price'] as num? ?? 0) / 100).toStringAsFixed(2))}'
+                : 'Apple price unavailable'))
         : '\$${(price / 100).toStringAsFixed(2)}${monthly ? ' / month' : ''}';
+    final priceLabel = _cleanPrice(rawPriceLabel);
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.all(16),
@@ -497,12 +524,38 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
         border: Border.all(color: Colors.white12),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(child: Text(tier['name'] as String? ?? 'Sponsor',
-              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold))),
-          Text(priceLabel,
-              style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.bold)),
-        ]),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                tier['name'] as String? ?? 'Sponsor',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.14),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+              ),
+              child: Text(
+                priceLabel,
+                style: const TextStyle(
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         Text('${tier['bannerSize'] ?? 'MEDIUM'} artwork · $filled / $available slots filled${active ? '' : ' · paused'}',
             style: const TextStyle(color: Color(0xFFC7C7CF), fontSize: 13)),
@@ -595,14 +648,19 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
                 labelStyle: TextStyle(color: Color(0xFFE0E0E6)),
                 prefixIcon: Icon(LucideIcons.heart, size: 18),
               ),
-              items: applePlans.map((entry) => DropdownMenuItem(
-                value: entry.key,
-                child: Text(
-                  '${_applePlanName(entry.key)} · '
-                  '\$${((entry.value['priceCents'] as num? ?? 0) / 100).toStringAsFixed(2)} USD',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              )).toList(),
+              items: applePlans.map((entry) {
+                final product = _appleProducts[entry.key];
+                final displayPrice = product != null
+                    ? _cleanPrice(product.price)
+                    : '\$${((entry.value['priceCents'] as num? ?? 0) / 100).toStringAsFixed(2)}';
+                return DropdownMenuItem(
+                  value: entry.key,
+                  child: Text(
+                    '${_applePlanName(entry.key)} · ' + displayPrice,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
               onChanged: (value) => setDialogState(() => applyApplePlan(value)),
             ),
           if (fixedApplePlans && tierId != null)
@@ -616,8 +674,8 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
               ),
             ),
           _input(name, 'Tier name', readOnly: fixedApplePlans),
-          _input(price, 'Price in USD', keyboard: TextInputType.number,
-              readOnly: fixedApplePlans),
+          if (!fixedApplePlans)
+            _input(price, 'Price in USD', keyboard: TextInputType.number),
           _input(quantity, 'Available slots', keyboard: TextInputType.number),
           DropdownButtonFormField<String>(
             value: bannerSize,
@@ -666,9 +724,9 @@ class _SponsorshipScreenState extends State<SponsorshipScreen> {
                   selectedAppleProductId == null
               ? null
               : () {
-            final amount = double.tryParse(price.text.trim());
+            final amount = double.tryParse(price.text.trim()) ?? 0.0;
             final slots = int.tryParse(quantity.text.trim());
-            if (name.text.trim().isEmpty || amount == null || slots == null) return;
+            if (name.text.trim().isEmpty || (!fixedApplePlans && amount <= 0) || slots == null) return;
             Navigator.pop(context, {
               if (!fixedApplePlans || tierId == null)
                 'name': name.text.trim(),

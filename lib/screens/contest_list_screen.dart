@@ -1972,7 +1972,7 @@ class _UserProfileTabState extends State<_UserProfileTab> {
             _stateController.text = user.state;
           }
 
-          final isPremium = user.subscriptionLevel == 'premium';
+          final isPremium = user.isPremium;
           final useAppleIap = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
           // Web-specific layout with max width constraint
@@ -2437,7 +2437,7 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                              color: user.subscriptionLevel == 'premium' 
+                              color: isPremium 
                                   ? AppTheme.primary.withOpacity(0.2)
                                   : Colors.white.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(12),
@@ -2445,15 +2445,15 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                             child: Row(
                               children: [
                                 Icon(
-                                  user.subscriptionLevel == 'premium' ? LucideIcons.crown : LucideIcons.user,
+                                  isPremium ? LucideIcons.crown : LucideIcons.user,
                                   size: 12,
-                                  color: user.subscriptionLevel == 'premium' ? AppTheme.primary : Colors.white54,
+                                  color: isPremium ? AppTheme.primary : Colors.white54,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  user.subscriptionLevel.toUpperCase(),
+                                  isPremium ? 'PREMIUM' : user.subscriptionLevel.toUpperCase(),
                                   style: TextStyle(
-                                    color: user.subscriptionLevel == 'premium' ? AppTheme.primary : Colors.white54,
+                                    color: isPremium ? AppTheme.primary : Colors.white54,
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -2465,13 +2465,13 @@ class _UserProfileTabState extends State<_UserProfileTab> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        user.subscriptionLevel == 'premium'
+                        isPremium
                             ? 'Unlimited voting, global contests, ad-free experience'
                             : 'Limited voting, local contests, basic features',
                         style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12),
                       ),
                       const SizedBox(height: 16),
-                      if (user.subscriptionLevel != 'premium')
+                      if (!isPremium)
                         SizedBox(
                           width: double.infinity,
                           height: 44,
@@ -2751,7 +2751,7 @@ class _MapTabState extends State<_MapTab> {
     if (user == null) return true; // Show all if no user (for testing)
     
     // Premium users can see all contests
-    if (user.subscriptionLevel == 'premium') return true;
+    if (user.isPremium) return true;
     
     // Free users: check visibility scope
     switch (contest.visibilityScope) {
@@ -2900,7 +2900,7 @@ class _MapTabState extends State<_MapTab> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Contests by location. ${engine.currentUserProfile?.subscriptionLevel == 'premium' ? 'Premium: Global view' : 'Free: Local view'}',
+                          'Contests by location. ${(engine.currentUserProfile?.isPremium ?? false) ? 'Premium: Global view' : 'Free: Local view'}',
                           style: const TextStyle(color: Colors.white70, fontSize: 11),
                         ),
                       ),
